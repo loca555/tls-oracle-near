@@ -168,6 +168,94 @@ PORT=4001
 | `get_stats()` | `{attestationCount, notaryCount, owner}` |
 | `get_owner()` | `AccountId` |
 
+## Integration Guide / Гайд по интеграции
+
+### Getting an API Key / Получение API-ключа
+
+1. Open https://tls-oracle-backend.onrender.com
+2. Click **"Connect Wallet"** → sign in with your NEAR testnet wallet
+3. Click **"Get API Key"** → your key (starting with `tlso_`) appears on screen
+4. **Copy the key** — use it in the `X-API-Key` header for all API requests
+
+### Using the API in your project / Использование API в вашем проекте
+
+**JavaScript / Node.js:**
+```javascript
+const API_KEY = "tlso_your_key_here";
+const BASE_URL = "https://tls-oracle-backend.onrender.com";
+
+// 1. Request attestation (MPC-TLS + ZK proof, takes 30-60 sec)
+const res = await fetch(`${BASE_URL}/api/prove`, {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "X-API-Key": API_KEY,
+  },
+  body: JSON.stringify({
+    url: "https://api.coingecko.com/api/v3/simple/price?ids=near&vs_currencies=usd",
+  }),
+});
+const attestation = await res.json();
+// attestation = { sourceUrl, serverName, timestamp, responseData, proofA, proofB, proofC, publicSignals }
+
+// 2. The responseData contains the actual API response, cryptographically verified
+const data = JSON.parse(attestation.responseData);
+console.log("NEAR price:", data.near.usd); // e.g. 3.42
+
+// 3. Submit to NEAR blockchain (optional — for on-chain verification)
+// Use near-api-js to call submit_attestation() on tls-oracle-v2.nearcast-oracle.testnet
+```
+
+**Python:**
+```python
+import requests
+
+API_KEY = "tlso_your_key_here"
+BASE_URL = "https://tls-oracle-backend.onrender.com"
+
+# Request attestation
+resp = requests.post(f"{BASE_URL}/api/prove", json={
+    "url": "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+}, headers={"X-API-Key": API_KEY})
+
+attestation = resp.json()
+print(f"Server: {attestation['serverName']}")
+print(f"Data: {attestation['responseData']}")
+print(f"ZK Proof signals: {attestation['publicSignals']}")
+```
+
+**cURL:**
+```bash
+curl -X POST https://tls-oracle-backend.onrender.com/api/prove \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: tlso_your_key_here" \
+  -d '{"url": "https://api.coingecko.com/api/v3/simple/price?ids=near&vs_currencies=usd"}'
+```
+
+### Rate Limits / Лимиты
+
+- **100 requests per day** per API key
+- Resets at 00:00 UTC
+- MPC-TLS proof generation takes ~30-60 seconds per request
+
+---
+
+### Гайд (RU)
+
+**Получение ключа:**
+1. Открыть https://tls-oracle-backend.onrender.com
+2. Подключить NEAR кошелёк → нажать **"Get API Key"**
+3. Ключ (начинается с `tlso_`) появится на экране — скопируйте его
+4. Используйте ключ в заголовке `X-API-Key` для всех запросов к API
+
+**Интеграция в ваш проект:**
+- Отправьте POST на `/api/prove` с URL любого публичного API
+- Получите ZK-верифицированные данные + Groth16 proof
+- (Опционально) Запишите аттестацию в NEAR блокчейн через `submit_attestation()`
+- Данные верифицированы криптографически — никто не может их подделать
+
+---
+
 ## Usage Examples / Примеры использования
 
 ### Get a crypto price attestation / Получить аттестацию цены криптовалюты

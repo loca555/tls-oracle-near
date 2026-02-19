@@ -238,9 +238,17 @@ function App() {
               <span style={{ color: "#8892b0", fontSize: 13 }}>
                 {account.accountId}
               </span>
-              {!apiKey && (
+              {!apiKey ? (
                 <button style={styles.btnSmall} onClick={handleRegisterKey}>
                   Get API Key
+                </button>
+              ) : (
+                <button
+                  style={{ ...styles.btnSmall, background: "#1e3a5f", color: "#93c5fd" }}
+                  onClick={() => { navigator.clipboard.writeText(apiKey); }}
+                  title={apiKey}
+                >
+                  Copy API Key
                 </button>
               )}
               <button style={styles.btnOutline} onClick={signOut}>
@@ -270,6 +278,31 @@ function App() {
           }}
         >
           An API key is required to request attestations. Click "Get API Key" above.
+        </div>
+      )}
+
+      {/* Show API key for copying */}
+      {account && apiKey && (
+        <div
+          style={{
+            ...styles.card,
+            borderColor: "#1e3a5f",
+            fontSize: 13,
+          }}
+        >
+          <div style={{ marginBottom: 6, color: "#93c5fd", fontWeight: 600 }}>Your API Key</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <code style={{ ...styles.mono, flex: 1, fontSize: 13, color: "#a5b4fc" }}>{apiKey}</code>
+            <button
+              style={{ ...styles.btnSmall, background: "#1e3a5f", color: "#93c5fd", whiteSpace: "nowrap" }}
+              onClick={() => navigator.clipboard.writeText(apiKey)}
+            >
+              Copy
+            </button>
+          </div>
+          <div style={{ marginTop: 8, color: "#4b5563", fontSize: 11 }}>
+            Use this key in the X-API-Key header for API requests. See docs for integration guide.
+          </div>
         </div>
       )}
 
