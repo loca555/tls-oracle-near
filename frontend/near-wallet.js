@@ -57,6 +57,10 @@ export function onAccountChange(callback) {
   });
 }
 
+export function getSelector() {
+  return selector;
+}
+
 export function showModal() {
   modal?.show();
 }

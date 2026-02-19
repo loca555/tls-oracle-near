@@ -1,6 +1,6 @@
 use near_sdk::borsh::BorshSerialize;
 use near_sdk::json_types::Base64VecU8;
-use near_sdk::store::{IterableMap, LookupMap};
+use near_sdk::store::{IterableMap, LookupMap, LookupSet};
 use near_sdk::{env, near, require, AccountId, BorshStorageKey, PanicOnDefault};
 
 // ── Ключи хранилища ─────────────────────────────────────────
@@ -11,6 +11,7 @@ enum StorageKey {
     TrustedNotaries,
     Attestations,
     AttestationsBySource,
+    UsedHashes,
 }
 
 // ── Модели данных ────────────────────────────────────────────
@@ -44,6 +45,13 @@ pub struct NotaryInfo {
     pub added_at: u64,
 }
 
+// ── Константы ─────────────────────────────────────────────────
+
+/// Максимальный возраст аттестации: 10 минут (в секундах)
+const MAX_ATTESTATION_AGE_SECS: u64 = 600;
+/// Допуск на будущее время: 1 минута (в секундах)
+const FUTURE_TOLERANCE_SECS: u64 = 60;
+
 // ── Контракт ─────────────────────────────────────────────────
 
 #[near(contract_state)]
@@ -53,6 +61,8 @@ pub struct TlsOracle {
     trusted_notaries: IterableMap<String, NotaryInfo>,
     attestations: IterableMap<u64, Attestation>,
     attestations_by_source: LookupMap<String, Vec<u64>>,
+    /// Использованные хеши для защиты от replay-атак
+    used_hashes: LookupSet<Vec<u8>>,
     attestation_count: u64,
 }
 
@@ -67,6 +77,7 @@ impl TlsOracle {
             trusted_notaries: IterableMap::new(StorageKey::TrustedNotaries),
             attestations: IterableMap::new(StorageKey::Attestations),
             attestations_by_source: LookupMap::new(StorageKey::AttestationsBySource),
+            used_hashes: LookupSet::new(StorageKey::UsedHashes),
             attestation_count: 0,
         }
     }
@@ -141,12 +152,29 @@ impl TlsOracle {
         require!(response_data.len() <= 4096, "response_data макс 4KB");
         require!(source_url.len() <= 2048, "source_url макс 2KB");
 
+        // Проверка timestamp: не старше MAX_ATTESTATION_AGE_SECS, не в будущем
+        let block_ts_secs = env::block_timestamp() / 1_000_000_000;
+        require!(
+            timestamp <= block_ts_secs + FUTURE_TOLERANCE_SECS,
+            "Timestamp аттестации в будущем"
+        );
+        require!(
+            timestamp + MAX_ATTESTATION_AGE_SECS >= block_ts_secs,
+            "Аттестация устарела (макс 10 минут)"
+        );
+
         // Формируем подписанное сообщение (такой же формат у Notary)
         let message = format!(
             "{}|{}|{}|{}",
             source_url, server_name, timestamp, response_data
         );
         let message_hash = env::sha256(message.as_bytes());
+
+        // Replay-защита: проверяем что этот хеш ещё не использовался
+        require!(
+            !self.used_hashes.contains(&message_hash),
+            "Эта аттестация уже была отправлена (replay)"
+        );
 
         // Ed25519 верификация — конвертируем Vec<u8> в fixed-size arrays
         let sig_arr: [u8; 64] = signature.0.as_slice().try_into()
@@ -156,6 +184,9 @@ impl TlsOracle {
 
         let valid = env::ed25519_verify(&sig_arr, &message_hash, &pk_arr);
         require!(valid, "Неверная Ed25519 подпись нотариуса");
+
+        // Сохраняем хеш как использованный
+        self.used_hashes.insert(message_hash.clone());
 
         // Сохраняем
         let id = self.attestation_count;

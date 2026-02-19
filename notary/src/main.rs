@@ -5,9 +5,11 @@
 //!
 //! Порт по умолчанию: 7047
 
+mod url_validator;
+
 use axum::{
     extract::State,
-    http::StatusCode,
+    http::{HeaderValue, Method, StatusCode},
     routing::{get, post},
     Json, Router,
 };
@@ -18,7 +20,7 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 // ── Типы ─────────────────────────────────────────────────────
 
@@ -82,24 +84,25 @@ async fn info(State(state): State<Arc<AppState>>) -> Json<NotaryInfoResponse> {
 
 /// POST /attest — выполнить запрос и подписать результат
 ///
-/// MVP: нотариус сам делает HTTP-запрос.
-/// Продакшн: MPC-TLS с Prover (нотариус не видит данные напрямую).
+/// SSRF-защита: только HTTPS, блок приватных IP, фильтрация заголовков.
 async fn attest(
     State(state): State<Arc<AppState>>,
     Json(req): Json<AttestRequest>,
 ) -> Result<Json<AttestResponse>, (StatusCode, String)> {
-    // Извлекаем домен из URL
-    let parsed_url = url::Url::parse(&req.url).map_err(|e| {
-        (StatusCode::BAD_REQUEST, format!("Неверный URL: {e}"))
+    // Валидация URL (SSRF-защита)
+    let parsed_url = url_validator::validate_url(&req.url).map_err(|e| {
+        warn!("URL отклонён: {} — {}", req.url, e);
+        (StatusCode::BAD_REQUEST, e)
     })?;
+
     let server_name = parsed_url
         .host_str()
         .ok_or((StatusCode::BAD_REQUEST, "URL без хоста".to_string()))?
         .to_string();
 
-    // Выполняем HTTP-запрос к целевому серверу
-    let client = reqwest::Client::new();
+    // Валидация HTTP-метода
     let method = req.method.as_deref().unwrap_or("GET");
+    let client = reqwest::Client::new();
 
     let mut request_builder = match method.to_uppercase().as_str() {
         "GET" => client.get(&req.url),
@@ -112,9 +115,10 @@ async fn attest(
         }
     };
 
-    // Добавляем заголовки
+    // Фильтрация заголовков (убираем опасные)
     if let Some(headers) = &req.headers {
-        for (k, v) in headers {
+        let safe_headers = url_validator::filter_headers(headers);
+        for (k, v) in &safe_headers {
             request_builder = request_builder.header(k, v);
         }
     }
@@ -207,6 +211,9 @@ async fn main() {
         .parse::<u16>()
         .expect("NOTARY_PORT должен быть числом");
 
+    let bind_addr = std::env::var("NOTARY_BIND")
+        .unwrap_or_else(|_| "127.0.0.1".to_string());
+
     // Загружаем или генерируем Ed25519 ключ
     let signing_key = load_or_generate_key();
     let verifying_key = signing_key.verifying_key();
@@ -228,14 +235,27 @@ async fn main() {
         verifying_key,
     });
 
+    // CORS: только разрешённый origin (по умолчанию — только Prover)
+    let allowed_origin = std::env::var("ALLOWED_ORIGIN")
+        .unwrap_or_else(|_| "http://127.0.0.1:7048".to_string());
+
+    let cors = CorsLayer::new()
+        .allow_origin(
+            allowed_origin
+                .parse::<HeaderValue>()
+                .expect("ALLOWED_ORIGIN должен быть валидным"),
+        )
+        .allow_methods([Method::GET, Method::POST])
+        .allow_headers([axum::http::header::CONTENT_TYPE]);
+
     let app = Router::new()
         .route("/health", get(health))
         .route("/info", get(info))
         .route("/attest", post(attest))
-        .layer(CorsLayer::permissive())
+        .layer(cors)
         .with_state(state);
 
-    let addr = format!("0.0.0.0:{port}");
+    let addr = format!("{bind_addr}:{port}");
     info!("TLS Notary Server запущен на {addr}");
 
     let listener = TcpListener::bind(&addr).await.unwrap();

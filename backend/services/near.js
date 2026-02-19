@@ -1,16 +1,13 @@
 /**
- * NEAR сервис — подключение к блокчейну
+ * NEAR сервис — только view-методы (чтение из контракта)
  *
- * Два режима:
- * - viewAccount: бесплатные чтения (без ключей)
- * - oracleAccount: подписание транзакций (submit_attestation)
+ * Серверный submit удалён: пользователь отправляет транзакции из своего кошелька.
  */
 
-import { connect, keyStores, KeyPair } from "near-api-js";
+import { connect, keyStores } from "near-api-js";
 import config from "../config.js";
 
 let viewAccount = null;
-let oracleAccount = null;
 
 // ── Инициализация read-only аккаунта ──────────────────────────
 
@@ -26,30 +23,6 @@ async function initViewAccount() {
 
   viewAccount = await near.account("dontcare");
   return viewAccount;
-}
-
-// ── Инициализация аккаунта оракула ────────────────────────────
-
-async function initOracleAccount() {
-  if (oracleAccount) return oracleAccount;
-
-  if (!config.oracle.accountId || !config.oracle.privateKey) {
-    throw new Error("ORACLE_ACCOUNT_ID и ORACLE_PRIVATE_KEY не установлены");
-  }
-
-  const keyStore = new keyStores.InMemoryKeyStore();
-  const keyPair = KeyPair.fromString(config.oracle.privateKey);
-  await keyStore.setKey(config.near.network, config.oracle.accountId, keyPair);
-
-  const near = await connect({
-    networkId: config.near.network,
-    keyStore,
-    nodeUrl: config.near.nodeUrl,
-  });
-
-  oracleAccount = await near.account(config.oracle.accountId);
-  console.log(`[near] Oracle подключён: ${config.oracle.accountId}`);
-  return oracleAccount;
 }
 
 // ── View методы (бесплатные) ──────────────────────────────────
@@ -81,10 +54,12 @@ export async function getAttestation(id) {
 }
 
 export async function getAttestationsBySource(serverName, limit = 20) {
-  return (await viewContract("get_attestations_by_source", {
-    server_name: serverName,
-    limit,
-  })) || [];
+  return (
+    (await viewContract("get_attestations_by_source", {
+      server_name: serverName,
+      limit,
+    })) || []
+  );
 }
 
 export async function getNotaries() {
@@ -92,33 +67,10 @@ export async function getNotaries() {
 }
 
 export async function getStats() {
-  return (await viewContract("get_stats")) || {
-    attestationCount: 0,
-    notaryCount: 0,
-  };
-}
-
-// ── Отправка аттестации в контракт ────────────────────────────
-
-export async function submitAttestation(attestation) {
-  const account = await initOracleAccount();
-
-  const result = await account.functionCall({
-    contractId: config.near.contractId,
-    methodName: "submit_attestation",
-    args: {
-      source_url: attestation.sourceUrl,
-      server_name: attestation.serverName,
-      timestamp: attestation.timestamp,
-      response_data: attestation.responseData,
-      notary_pubkey: attestation.notaryPubkey,
-      signature: attestation.signature,
-    },
-    gas: "100000000000000", // 100 TGas
-    attachedDeposit: "50000000000000000000000", // 0.05 NEAR (storage)
-  });
-
-  const txHash = result.transaction?.hash || result.transaction_outcome?.id;
-  console.log(`[near] Аттестация отправлена. TX: ${txHash}`);
-  return txHash;
+  return (
+    (await viewContract("get_stats")) || {
+      attestationCount: 0,
+      notaryCount: 0,
+    }
+  );
 }

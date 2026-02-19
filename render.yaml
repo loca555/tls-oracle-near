@@ -9,8 +9,15 @@ services:
     envVars:
       - key: NOTARY_PORT
         value: "10000"
+      - key: NOTARY_BIND
+        value: "0.0.0.0"
       - key: NOTARY_KEY_PATH
         value: /data/notary_key.bin
+      - key: ALLOWED_ORIGIN
+        fromService:
+          type: web
+          name: tls-prover-service
+          property: host
     disk:
       name: notary-data
       mountPath: /data
@@ -26,10 +33,17 @@ services:
     envVars:
       - key: PROVER_PORT
         value: "10000"
+      - key: PROVER_BIND
+        value: "0.0.0.0"
       - key: NOTARY_URL
         fromService:
           type: web
           name: tls-notary-server
+          property: host
+      - key: ALLOWED_ORIGIN
+        fromService:
+          type: web
+          name: tls-oracle-backend
           property: host
 
   # Backend + Frontend — Node.js
@@ -48,10 +62,6 @@ services:
         value: testnet
       - key: TLS_ORACLE_CONTRACT
         value: tls-oracle.nearcast-oracle.testnet
-      - key: ORACLE_ACCOUNT_ID
-        sync: false
-      - key: ORACLE_PRIVATE_KEY
-        sync: false
       - key: PROVER_URL
         fromService:
           type: web

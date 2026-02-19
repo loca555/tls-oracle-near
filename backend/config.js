@@ -20,11 +20,6 @@ export default {
     contractId: process.env.TLS_ORACLE_CONTRACT || "",
   },
 
-  oracle: {
-    accountId: process.env.ORACLE_ACCOUNT_ID || "",
-    privateKey: process.env.ORACLE_PRIVATE_KEY || "",
-  },
-
   prover: {
     url: process.env.PROVER_URL || "http://127.0.0.1:7048",
   },

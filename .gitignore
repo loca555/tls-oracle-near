@@ -4,4 +4,7 @@ notary_key.bin
 target/
 dist/
 *.wasm
+tls-oracle.db
+tls-oracle.db-wal
+tls-oracle.db-shm
 CLAUDE.md
