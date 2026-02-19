@@ -30,13 +30,12 @@ export async function initWalletSelector(networkId = "testnet", contract = "", n
             : "https://app.mynearwallet.com",
       }),
     ],
-    createAccessKeyFor: contract || undefined,
+    // Не создаём access key — контракт может не быть задеплоен,
+    // а также пользователю не нужен function-call key для API-ключей
   });
 
   modal = setupModal(selector, {
     theme: "dark",
-    contractId: contract || undefined,
-    methodNames: ["submit_attestation"],
   });
   return { selector, modal };
 }
