@@ -13,7 +13,7 @@ export function requireAuth(req, res, next) {
   if (!apiKey) {
     return res
       .status(401)
-      .json({ error: "API-ключ обязателен. Заголовок: X-API-Key" });
+      .json({ error: "API key required. Header: X-API-Key" });
   }
 
   // Сервисный ключ — для service-to-service (NearCast relayer и т.д.)
@@ -25,12 +25,12 @@ export function requireAuth(req, res, next) {
   const keyInfo = validateApiKey(apiKey);
 
   if (!keyInfo) {
-    return res.status(401).json({ error: "Неверный или деактивированный API-ключ" });
+    return res.status(401).json({ error: "Invalid or deactivated API key" });
   }
 
   if (keyInfo.rateLimited) {
     return res.status(429).json({
-      error: "Превышен дневной лимит запросов",
+      error: "Daily request limit exceeded",
       limit: DAILY_LIMIT,
       resetAt: "00:00 UTC",
     });

@@ -361,18 +361,42 @@ Two-level Poseidon tree for data (17 blocks × 31 bytes = 527 bytes max):
 
 ## Roadmap
 
+### Completed
 - [x] MPC-TLS protocol (tlsn v0.1.0-alpha.14, embedded Prover + Notary)
 - [x] ZK-proof on-chain verification (Groth16 via alt_bn128_pairing_check)
 - [x] Poseidon-based circuit (4607 constraints, <1 sec proof generation)
 - [x] Replay protection (Poseidon data commitment)
-- [x] API keys via NEAR wallet verification
+- [x] API keys via NEAR wallet verification + management (delete/regenerate)
 - [x] SSRF protection in Prover (url_validator)
-- [ ] ECDSA secp256k1 verification in circuit — trustless proof (circom-ecdsa, ~500K constraints)
-- [ ] NearCast integration as oracle provider
-- [ ] Selective disclosure (reveal only parts of data)
-- [ ] Multiple notaries (N-of-M threshold)
-- [ ] *(low priority)* TEE attestation for Notary (Intel TDX/SGX)
-- [ ] *(low priority)* WebSocket streaming for MPC-TLS session progress
+- [x] Trusted notary registry on-chain (add/remove by owner)
+
+### Security Roadmap
+
+**Current trust model (testnet):** Prover and Notary run on the same server — trust is centralized. The operator controls both components and could theoretically create fake MPC-TLS sessions.
+
+| Phase | Feature | Impact | Status |
+|-------|---------|--------|--------|
+| 1 | **Independent Notary** — separate Notary server (e.g. [PSE Notary](https://notary.pse.dev)) | Eliminates single-operator risk. Honest-majority: attacker must compromise both Prover AND Notary | Planned |
+| 2 | **ECDSA in-circuit verification** — verify Notary's secp256k1 signature inside ZK circuit (circom-ecdsa, ~500K constraints) | Fully trustless: proof itself guarantees Notary signed the data, no trust in Prover needed | Planned |
+| 3 | **Multiple Notaries (M-of-N)** — require attestations from M out of N independent notaries | Byzantine fault tolerance. Even if some notaries are compromised, the system remains secure | Planned |
+| 4 | **TEE Notary** — run Notary inside Intel SGX/TDX or ARM TrustZone | Even the server operator cannot access Notary's private key or tamper with its logic | Low priority |
+
+**What is already secure:**
+- TLS encryption guarantees data authenticity (MITM impossible without CA compromise)
+- Groth16 proofs are cryptographically sound (cannot be forged)
+- On-chain verification via alt_bn128 pairing check (~15 TGas)
+- Replay protection via Poseidon data commitment
+- Timestamp freshness check (±10 min)
+
+**What requires trust (current):**
+- Notary runs on the same server as Prover — operator could collude with themselves
+- Prover parses and extracts data off-chain — but ZK proof binds the data to the TLS session
+
+### Features Roadmap
+- [ ] NearCast integration — TLS Oracle as alternative oracle for prediction markets (ESPN sports data)
+- [ ] Selective disclosure — reveal only specific fields from API responses
+- [ ] WebSocket streaming for MPC-TLS session progress
+- [ ] Persistent storage for API keys (currently ephemeral on Render)
 
 ## License
 

@@ -18,7 +18,36 @@ function getApiKey() {
   return localStorage.getItem("tls-oracle-api-key") || "";
 }
 function setApiKey(key) {
-  localStorage.setItem("tls-oracle-api-key", key);
+  if (key) {
+    localStorage.setItem("tls-oracle-api-key", key);
+  } else {
+    localStorage.removeItem("tls-oracle-api-key");
+  }
+}
+
+/** Проверить валидность API-ключа на бэкенде */
+async function validateStoredApiKey() {
+  const key = getApiKey();
+  if (!key) return "";
+  try {
+    const res = await fetch(`${API}/health`, { headers: { "X-API-Key": key } });
+    if (res.ok) return key;
+    // Любой ответ кроме 200 — ключ может быть невалиден, но /health не требует ключ
+    // Проверим через prove endpoint с пустым телом
+    const check = await fetch(`${API}/prove`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-API-Key": key },
+      body: JSON.stringify({ url: "" }),
+    });
+    // 401/403 = ключ невалиден, 400 = ключ ок но запрос плохой
+    if (check.status === 401 || check.status === 403) {
+      localStorage.removeItem("tls-oracle-api-key");
+      return "";
+    }
+    return key;
+  } catch {
+    return key; // Сеть недоступна — оставляем ключ
+  }
 }
 
 // ── Styles ──────────────────────────────────────────────────
@@ -169,6 +198,10 @@ function App() {
   useEffect(() => {
     (async () => {
       try {
+        // Проверяем валидность сохранённого API-ключа (БД могла сброситься при деплое)
+        const validKey = await validateStoredApiKey();
+        if (validKey !== apiKey) setApiKeyState(validKey);
+
         const res = await fetch(`${API}/near-config`);
         const { networkId, nodeUrl, contractId } = await res.json();
         await initWalletSelector(networkId, contractId, nodeUrl);
@@ -461,6 +494,11 @@ function ProveTab({ account, apiKey }) {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
+        // Ключ невалиден — очистить и предложить перерегистрацию
+        if (res.status === 401 || res.status === 403) {
+          setApiKey("");
+          setApiKeyState("");
+        }
         throw new Error(data.error || `HTTP ${res.status}`);
       }
       const data = await res.json();
