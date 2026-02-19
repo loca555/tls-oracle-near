@@ -4,3 +4,4 @@ notary_key.bin
 target/
 dist/
 *.wasm
+CLAUDE.md
