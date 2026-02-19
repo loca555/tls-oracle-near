@@ -47,3 +47,5 @@ services:
           type: web
           name: tls-oracle-prover
           property: host
+      - key: SERVICE_API_KEY
+        generateValue: true
