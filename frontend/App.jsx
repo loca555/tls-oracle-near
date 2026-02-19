@@ -12,7 +12,7 @@ import {
 
 const API = "/api";
 
-// ── Утилиты API-ключа ──────────────────────────────────────
+// ── API key utils ───────────────────────────────────────────
 
 function getApiKey() {
   return localStorage.getItem("tls-oracle-api-key") || "";
@@ -21,7 +21,7 @@ function setApiKey(key) {
   localStorage.setItem("tls-oracle-api-key", key);
 }
 
-// ── Стили ────────────────────────────────────────────────────
+// ── Styles ──────────────────────────────────────────────────
 
 const styles = {
   app: { maxWidth: 900, margin: "0 auto", padding: "20px" },
@@ -138,7 +138,7 @@ const styles = {
   }),
 };
 
-// ── Главный компонент ────────────────────────────────────────
+// ── Main component ──────────────────────────────────────────
 
 function App() {
   const [account, setAccount] = useState(null);
@@ -162,11 +162,11 @@ function App() {
     })();
   }, []);
 
-  // Регистрация API-ключа через NEAR wallet
+  // Register API key via NEAR wallet
   const handleRegisterKey = async () => {
     if (!account) return;
     try {
-      // 1. Получаем challenge
+      // 1. Get challenge
       const chalRes = await fetch(`${API}/auth/challenge`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -174,7 +174,7 @@ function App() {
       });
       const { nonce } = await chalRes.json();
 
-      // 2. Получаем publicKey из wallet selector
+      // 2. Get publicKey from wallet selector
       const selector = getSelector();
       const state = selector.store.getState();
       const acc = state.accounts?.[0];
@@ -182,11 +182,11 @@ function App() {
 
       if (!publicKey) {
         throw new Error(
-          "Не удалось получить publicKey. Переподключите кошелёк.",
+          "Failed to get publicKey. Please reconnect your wallet.",
         );
       }
 
-      // 3. Верифицируем через бэкенд (проверяет что ключ принадлежит аккаунту)
+      // 3. Verify via backend (checks that key belongs to account)
       const verRes = await fetch(`${API}/auth/verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -199,14 +199,14 @@ function App() {
 
       if (!verRes.ok) {
         const err = await verRes.json().catch(() => ({}));
-        throw new Error(err.error || "Ошибка верификации");
+        throw new Error(err.error || "Verification failed");
       }
 
       const { apiKey: newKey } = await verRes.json();
       setApiKey(newKey);
       setApiKeyState(newKey);
     } catch (err) {
-      alert("Ошибка регистрации: " + err.message);
+      alert("Registration error: " + err.message);
     }
   };
 
@@ -222,11 +222,11 @@ function App() {
               </span>
               {!apiKey && (
                 <button style={styles.btnSmall} onClick={handleRegisterKey}>
-                  Получить API-ключ
+                  Get API Key
                 </button>
               )}
               <button style={styles.btnOutline} onClick={signOut}>
-                Выйти
+                Sign Out
               </button>
             </>
           ) : (
@@ -235,13 +235,13 @@ function App() {
               onClick={showModal}
               disabled={!walletReady}
             >
-              Подключить кошелёк
+              Connect Wallet
             </button>
           )}
         </div>
       </header>
 
-      {/* Предупреждение: нужен API-ключ */}
+      {/* Warning: API key required */}
       {account && !apiKey && (
         <div
           style={{
@@ -251,7 +251,7 @@ function App() {
             fontSize: 13,
           }}
         >
-          Для запроса аттестаций нужен API-ключ. Нажмите «Получить API-ключ».
+          An API key is required to request attestations. Click "Get API Key" above.
         </div>
       )}
 
@@ -260,19 +260,19 @@ function App() {
           style={styles.tab(tab === "prove")}
           onClick={() => setTab("prove")}
         >
-          Доказать данные
+          Prove Data
         </button>
         <button
           style={styles.tab(tab === "feed")}
           onClick={() => setTab("feed")}
         >
-          Лента аттестаций
+          Attestation Feed
         </button>
         <button
           style={styles.tab(tab === "notaries")}
           onClick={() => setTab("notaries")}
         >
-          Нотариусы
+          Notaries
         </button>
       </div>
 
@@ -283,7 +283,7 @@ function App() {
   );
 }
 
-// ── Таб: Доказать данные ─────────────────────────────────────
+// ── Tab: Prove Data ─────────────────────────────────────────
 
 function ProveTab({ account, apiKey }) {
   const [templates, setTemplates] = useState([]);
@@ -330,7 +330,7 @@ function ProveTab({ account, apiKey }) {
     }
   };
 
-  // Submit через кошелёк пользователя (user pays)
+  // Submit via user's wallet (user pays gas)
   const handleSubmit = async () => {
     if (!result || !account) return;
     setSubmitting(true);
@@ -352,7 +352,7 @@ function ProveTab({ account, apiKey }) {
     <div>
       <div style={styles.card}>
         <h3 style={{ marginBottom: 12, color: "#a5b4fc" }}>
-          Запросить TLS-аттестацию
+          Request TLS Attestation
         </h3>
 
         <select
@@ -362,7 +362,7 @@ function ProveTab({ account, apiKey }) {
           }}
           defaultValue=""
         >
-          <option value="">Выберите пресет или введите URL...</option>
+          <option value="">Choose a preset or enter URL...</option>
           {templates.map((t) => (
             <option key={t.id} value={t.url}>
               {t.name}
@@ -391,8 +391,8 @@ function ProveTab({ account, apiKey }) {
           {loading
             ? "MPC-TLS + ZK proof..."
             : !apiKey
-              ? "Нужен API-ключ"
-              : "Получить аттестацию"}
+              ? "API key required"
+              : "Get Attestation"}
         </button>
       </div>
 
@@ -407,10 +407,10 @@ function ProveTab({ account, apiKey }) {
       {result && (
         <div style={styles.card}>
           <h3 style={{ marginBottom: 12, color: "#6ee7b7" }}>
-            Аттестация получена
+            Attestation Received
           </h3>
           <div style={{ marginBottom: 8 }}>
-            <span style={styles.tag}>Домен</span>
+            <span style={styles.tag}>Domain</span>
             <strong>{result.serverName}</strong>
           </div>
           <div style={{ marginBottom: 8 }}>
@@ -418,7 +418,7 @@ function ProveTab({ account, apiKey }) {
             {new Date(result.timestamp * 1000).toLocaleString()}
           </div>
           <div style={{ marginBottom: 8 }}>
-            <span style={styles.tag}>Данные</span>
+            <span style={styles.tag}>Data</span>
           </div>
           <pre style={styles.pre}>
             {JSON.stringify(
@@ -451,12 +451,12 @@ function ProveTab({ account, apiKey }) {
               disabled={submitting || !!txHash || !account}
             >
               {submitting
-                ? "Подтвердите в кошельке..."
+                ? "Confirm in wallet..."
                 : txHash
-                  ? "Записано в NEAR"
+                  ? "Submitted to NEAR"
                   : !account
-                    ? "Подключите кошелёк"
-                    : "Записать в NEAR (0.05 NEAR)"}
+                    ? "Connect wallet first"
+                    : "Submit to NEAR (0.05 NEAR)"}
             </button>
           </div>
 
@@ -479,7 +479,7 @@ function ProveTab({ account, apiKey }) {
   );
 }
 
-// ── Таб: Лента аттестаций ────────────────────────────────────
+// ── Tab: Attestation Feed ───────────────────────────────────
 
 function FeedTab() {
   const [attestations, setAttestations] = useState([]);
@@ -495,9 +495,9 @@ function FeedTab() {
       .catch(() => setLoading(false));
   }, []);
 
-  if (loading) return <div style={styles.card}>Загрузка...</div>;
+  if (loading) return <div style={styles.card}>Loading...</div>;
   if (attestations.length === 0)
-    return <div style={styles.card}>Аттестаций пока нет</div>;
+    return <div style={styles.card}>No attestations yet</div>;
 
   return (
     <div style={styles.grid}>
@@ -538,7 +538,7 @@ function FeedTab() {
   );
 }
 
-// ── Таб: Нотариусы ───────────────────────────────────────────
+// ── Tab: Notaries ───────────────────────────────────────────
 
 function NotariesTab() {
   const [notaries, setNotaries] = useState([]);
@@ -568,13 +568,13 @@ function NotariesTab() {
             <div style={{ fontSize: 24, fontWeight: 700, color: "#a5b4fc" }}>
               {stats.attestationCount || 0}
             </div>
-            <div style={{ fontSize: 12, color: "#8892b0" }}>Аттестаций</div>
+            <div style={{ fontSize: 12, color: "#8892b0" }}>Attestations</div>
           </div>
           <div>
             <div style={{ fontSize: 24, fontWeight: 700, color: "#a5b4fc" }}>
               {stats.notaryCount || 0}
             </div>
-            <div style={{ fontSize: 12, color: "#8892b0" }}>Нотариусов</div>
+            <div style={{ fontSize: 12, color: "#8892b0" }}>Notaries</div>
           </div>
         </div>
       )}
@@ -582,7 +582,7 @@ function NotariesTab() {
       {health && (
         <div style={styles.card}>
           <h4 style={{ marginBottom: 8, color: "#8892b0" }}>
-            Статус сервисов
+            Service Status
           </h4>
           <div style={{ display: "flex", gap: 12 }}>
             <span style={styles.status(health.backend)}>Backend</span>
@@ -593,10 +593,10 @@ function NotariesTab() {
       )}
 
       <h3 style={{ marginBottom: 12, marginTop: 16, color: "#a5b4fc" }}>
-        Доверенные нотариусы
+        Trusted Notaries
       </h3>
       {notaries.length === 0 ? (
-        <div style={styles.card}>Нотариусы не зарегистрированы</div>
+        <div style={styles.card}>No notaries registered</div>
       ) : (
         <div style={styles.grid}>
           {notaries.map((n, i) => (
@@ -619,6 +619,6 @@ function NotariesTab() {
   );
 }
 
-// ── Mount ─────────────────────────────────────────────────────
+// ── Mount ───────────────────────────────────────────────────
 
 createRoot(document.getElementById("root")).render(<App />);
