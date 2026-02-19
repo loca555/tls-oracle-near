@@ -45,6 +45,11 @@ router.post("/verify", async (req, res) => {
   }
 });
 
+// Проверка валидности API-ключа (лёгкий endpoint)
+router.get("/check", requireAuth, (_req, res) => {
+  res.json({ valid: true });
+});
+
 // Шаг 3 (опционально): Удалить (деактивировать) текущий API-ключ
 router.delete("/key", requireAuth, (req, res) => {
   try {

@@ -30,21 +30,13 @@ async function validateStoredApiKey() {
   const key = getApiKey();
   if (!key) return "";
   try {
-    const res = await fetch(`${API}/health`, { headers: { "X-API-Key": key } });
-    if (res.ok) return key;
-    // Любой ответ кроме 200 — ключ может быть невалиден, но /health не требует ключ
-    // Проверим через prove endpoint с пустым телом
-    const check = await fetch(`${API}/prove`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-API-Key": key },
-      body: JSON.stringify({ url: "" }),
+    const res = await fetch(`${API}/auth/check`, {
+      headers: { "X-API-Key": key },
     });
-    // 401/403 = ключ невалиден, 400 = ключ ок но запрос плохой
-    if (check.status === 401 || check.status === 403) {
-      localStorage.removeItem("tls-oracle-api-key");
-      return "";
-    }
-    return key;
+    if (res.ok) return key;
+    // 401 = ключ невалиден — очистить
+    localStorage.removeItem("tls-oracle-api-key");
+    return "";
   } catch {
     return key; // Сеть недоступна — оставляем ключ
   }
@@ -281,10 +273,16 @@ function App() {
     }
   };
 
+  // Очистить невалидный ключ из state и localStorage
+  const clearKey = () => {
+    setApiKey("");
+    setApiKeyState("");
+  };
+
   // Удалить (деактивировать) API-ключ
   const handleDeleteKey = async () => {
     if (!apiKey) return;
-    if (!confirm("Вы уверены? API-ключ будет деактивирован. Для нового ключа потребуется повторная регистрация.")) return;
+    if (!confirm("Are you sure? The API key will be deactivated.")) return;
 
     try {
       const res = await fetch(`${API}/auth/key`, {
@@ -292,14 +290,18 @@ function App() {
         headers: { "X-API-Key": apiKey },
       });
 
+      // Ключ невалиден — просто очищаем
+      if (res.status === 401 || res.status === 403) {
+        clearKey();
+        return;
+      }
+
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || `HTTP ${res.status}`);
       }
 
-      // Очищаем localStorage и состояние
-      localStorage.removeItem("tls-oracle-api-key");
-      setApiKeyState("");
+      clearKey();
     } catch (err) {
       alert("Delete error: " + err.message);
     }
@@ -308,7 +310,7 @@ function App() {
   // Перегенерировать API-ключ (старый деактивируется, выдаётся новый)
   const handleRegenerateKey = async () => {
     if (!apiKey) return;
-    if (!confirm("Старый ключ будет деактивирован. Создать новый?")) return;
+    if (!confirm("Old key will be deactivated. Generate new one?")) return;
 
     try {
       const res = await fetch(`${API}/auth/regenerate`, {
@@ -318,6 +320,12 @@ function App() {
           "X-API-Key": apiKey,
         },
       });
+
+      // Ключ невалиден — очищаем, пользователь получит новый через "Get API Key"
+      if (res.status === 401 || res.status === 403) {
+        clearKey();
+        return;
+      }
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
