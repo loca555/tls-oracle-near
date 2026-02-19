@@ -13,18 +13,22 @@ use k256::ecdsa::SigningKey;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::sync::oneshot;
 use tokio_util::compat::{FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
 use tracing::{error, info, warn};
 
-use tlsn::attestation::request::RequestConfig;
+use tlsn::attestation::request::{Request as AttestationRequest, RequestConfig};
 use tlsn::attestation::signing::Secp256k1Signer;
-use tlsn::attestation::CryptoProvider;
+use tlsn::attestation::{Attestation, AttestationConfig, CryptoProvider};
 use tlsn::config::prover::ProverConfig;
 use tlsn::config::tls::TlsClientConfig;
 use tlsn::config::tls_commit::mpc::MpcTlsConfig;
 use tlsn::config::tls_commit::TlsCommitConfig;
 use tlsn::config::verifier::VerifierConfig;
-use tlsn::connection::ServerName;
+use tlsn::connection::{ConnectionInfo, HandshakeData, ServerName, TranscriptLength};
+use tlsn::prover::ProverOutput;
+use tlsn::transcript::ContentType;
+use tlsn::verifier::VerifierOutput;
 use tlsn::Session;
 
 /// Результат MPC-TLS сессии
@@ -37,7 +41,7 @@ pub struct SessionResult {
     pub timestamp: u64,
     /// Тело HTTP-ответа (расшифрованное)
     pub response_data: String,
-    /// Сериализованная attestation (bincode → base64)
+    /// Сериализованная attestation (bincode -> base64)
     pub attestation_b64: String,
     /// Публичный ключ нотариуса (secp256k1 compressed, base64)
     pub notary_pubkey_b64: String,
@@ -45,11 +49,11 @@ pub struct SessionResult {
 
 /// Запускает полную MPC-TLS сессию
 ///
-/// 1. Создаёт in-process duplex канал для Prover ↔ Verifier
+/// 1. Создаёт in-process duplex канал для Prover <-> Verifier
 /// 2. Запускает Verifier (Notary) в фоновом task
 /// 3. Prover подключается к целевому серверу через MPC-TLS
 /// 4. Выполняет HTTP-запрос
-/// 5. Генерирует доказательство и получает attestation
+/// 5. Генерирует proof и получает attestation через oneshot каналы
 pub async fn run(
     signing_key: Arc<SigningKey>,
     url: &str,
@@ -71,13 +75,17 @@ pub async fn run(
 
     info!("MPC-TLS сессия: {} ({}:{}{})", url, host, port, path);
 
-    // 1. Создаём duplex канал (Prover ↔ Verifier)
+    // 1. Создаём duplex канал (Prover <-> Verifier)
     let (prover_io, verifier_io) = tokio::io::duplex(1 << 16); // 64KB buffer
+
+    // Каналы для attestation (вне MPC-сессии)
+    let (req_tx, req_rx) = oneshot::channel::<AttestationRequest>();
+    let (att_tx, att_rx) = oneshot::channel::<Attestation>();
 
     // 2. Запускаем Verifier (Notary) в фоне
     let signing_key_clone = signing_key.clone();
     let verifier_task = tokio::spawn(async move {
-        if let Err(e) = run_verifier(verifier_io, signing_key_clone).await {
+        if let Err(e) = run_verifier(verifier_io, signing_key_clone, req_rx, att_tx).await {
             error!("Verifier ошибка: {e:#}");
         }
     });
@@ -111,18 +119,18 @@ pub async fn run(
         .await
         .context(format!("Не удалось подключиться к {host}:{port}"))?;
 
-    let server_name = ServerName::Dns(
-        host.clone()
-            .try_into()
-            .context("Неверное DNS-имя сервера")?,
-    );
-
     let tls_config = TlsClientConfig::builder()
-        .server_name(server_name)
+        .server_name(ServerName::Dns(
+            host.clone()
+                .try_into()
+                .context("Неверное DNS-имя сервера")?,
+        ))
         .build()?;
 
+    // connect() — async в новом API
     let (tls_connection, prover_fut) = prover
         .connect(tls_config, target_socket.compat())
+        .await
         .context("Ошибка MPC-TLS connect")?;
 
     let tls_connection = TokioIo::new(tls_connection.compat());
@@ -158,7 +166,10 @@ pub async fn run(
     let response_data = String::from_utf8_lossy(&body_bytes).to_string();
 
     if status != StatusCode::OK {
-        warn!("HTTP ответ {status}: {}", &response_data[..200.min(response_data.len())]);
+        warn!(
+            "HTTP ответ {status}: {}",
+            &response_data[..200.min(response_data.len())]
+        );
     }
 
     info!(
@@ -187,15 +198,54 @@ pub async fn run(
         prove_config.reveal_recv(&(0..recv_len))?;
     }
 
-    prover.prove(&prove_config.build()?).await?;
+    let ProverOutput {
+        transcript_commitments,
+        transcript_secrets,
+        ..
+    } = prover.prove(&prove_config.build()?).await?;
 
-    // Запрашиваем attestation от Verifier
+    // Получаем данные для attestation request
+    let transcript = prover.transcript().clone();
+    let tls_transcript = prover.tls_transcript().clone();
+    prover.close().await?;
+
+    // 8. Строим AttestationRequest и отправляем нотариусу через канал
     let request_config = RequestConfig::builder().build()?;
-    let (attestation, secrets) = prover.request_attestation(request_config).await?;
+    let mut att_builder = AttestationRequest::builder(&request_config);
+    att_builder
+        .server_name(ServerName::Dns(
+            host.clone()
+                .try_into()
+                .context("Неверное DNS-имя для attestation")?,
+        ))
+        .handshake_data(HandshakeData {
+            certs: tls_transcript
+                .server_cert_chain()
+                .expect("server cert chain is present")
+                .to_vec(),
+            sig: tls_transcript
+                .server_signature()
+                .expect("server signature is present")
+                .clone(),
+            binding: tls_transcript.certificate_binding().clone(),
+        })
+        .transcript(transcript)
+        .transcript_commitments(transcript_secrets, transcript_commitments);
+
+    let (att_request, _secrets) = att_builder.build(&CryptoProvider::default())?;
+
+    // Отправляем attestation request нотариусу
+    req_tx
+        .send(att_request)
+        .map_err(|_| anyhow::anyhow!("Verifier не принимает attestation request"))?;
+
+    // Получаем подписанную attestation
+    let attestation = att_rx
+        .await
+        .context("Verifier не вернул attestation")?;
 
     // Закрываем сессию
-    prover.close().await?;
-    handle.close().await?;
+    handle.close();
     let _ = driver_task.await;
     let _ = verifier_task.await;
 
@@ -229,6 +279,8 @@ pub async fn run(
 async fn run_verifier<T: AsyncRead + AsyncWrite + Send + Unpin + 'static>(
     io: T,
     signing_key: Arc<SigningKey>,
+    req_rx: oneshot::Receiver<AttestationRequest>,
+    att_tx: oneshot::Sender<Attestation>,
 ) -> Result<()> {
     info!("Verifier: запуск");
 
@@ -245,35 +297,87 @@ async fn run_verifier<T: AsyncRead + AsyncWrite + Send + Unpin + 'static>(
         .await
         .context("Verifier commit")?;
 
-    // Принимаем конфигурацию Prover
+    // Принимаем конфигурацию Prover и запускаем MPC-TLS
     let verifier = verifier.accept().await?.run().await?;
 
     // Верифицируем proof от Prover
-    let verifier = verifier.verify().await?;
-    let (output, verifier) = verifier.accept().await?;
+    let (
+        VerifierOutput {
+            transcript_commitments,
+            ..
+        },
+        verifier,
+    ) = verifier.verify().await?.accept().await?;
 
-    info!(
-        "Verifier: proof принят, server_name={:?}",
-        output.server_name
-    );
+    let tls_transcript = verifier.tls_transcript().clone();
+    verifier.close().await?;
 
-    // Обрабатываем attestation request
-    let (request, verifier) = verifier.receive_attestation_request().await?;
+    info!("Verifier: proof принят");
+
+    // Вычисляем длины транскрипта (только ApplicationData)
+    let sent_len = tls_transcript
+        .sent()
+        .iter()
+        .filter_map(|record| {
+            if let ContentType::ApplicationData = record.typ {
+                Some(record.ciphertext.len())
+            } else {
+                None
+            }
+        })
+        .sum::<usize>();
+
+    let recv_len = tls_transcript
+        .recv()
+        .iter()
+        .filter_map(|record| {
+            if let ContentType::ApplicationData = record.typ {
+                Some(record.ciphertext.len())
+            } else {
+                None
+            }
+        })
+        .sum::<usize>();
+
+    // Получаем attestation request от Prover через канал
+    let request = req_rx
+        .await
+        .context("Prover не отправил attestation request")?;
 
     // Создаём CryptoProvider с нашим signing key
-    let signer = Secp256k1Signer::new(&signing_key.to_bytes().into())?;
+    let signer = Box::new(Secp256k1Signer::new(&signing_key.to_bytes())?);
     let mut provider = CryptoProvider::default();
-    provider.signer.set_signer(Box::new(signer));
+    provider.signer.set_signer(signer);
 
-    // Строим и отправляем attestation
-    let attestation_config = tlsn::attestation::AttestationConfig::builder().build()?;
-    verifier
-        .attestation_request(request, &attestation_config, &provider)
-        .await?;
+    // Строим attestation
+    let mut att_config_builder = AttestationConfig::builder();
+    att_config_builder
+        .supported_signature_algs(Vec::from_iter(provider.signer.supported_algs()));
+    let att_config = att_config_builder.build()?;
+
+    let mut builder = Attestation::builder(&att_config).accept_request(request)?;
+    builder
+        .connection_info(ConnectionInfo {
+            time: tls_transcript.time(),
+            version: (*tls_transcript.version()),
+            transcript_length: TranscriptLength {
+                sent: sent_len as u32,
+                received: recv_len as u32,
+            },
+        })
+        .server_ephemeral_key(tls_transcript.server_ephemeral_key().clone())
+        .transcript_commitments(transcript_commitments);
+
+    let attestation = builder.build(&provider)?;
+
+    // Отправляем attestation Prover-у через канал
+    att_tx
+        .send(attestation)
+        .map_err(|_| anyhow::anyhow!("Prover не принимает attestation"))?;
 
     info!("Verifier: attestation отправлена");
 
-    handle.close().await?;
+    handle.close();
     let _ = driver_task.await;
 
     Ok(())
