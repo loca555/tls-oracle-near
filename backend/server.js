@@ -21,7 +21,8 @@ if (process.env.NODE_ENV === "production") {
   const { default: path } = await import("path");
   const frontendPath = path.resolve("frontend/dist");
   app.use(express.static(frontendPath));
-  app.get("*", (_req, res) => {
+  app.get("*", (_req, res, next) => {
+    if (_req.path.startsWith("/api/")) return next();
     res.sendFile(path.join(frontendPath, "index.html"));
   });
 }
