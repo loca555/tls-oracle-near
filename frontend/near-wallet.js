@@ -2,7 +2,7 @@
  * NEAR Wallet — подключение кошелька и взаимодействие с TLS Oracle контрактом
  */
 
-import { setupWalletSelector, actionCreators } from "@near-wallet-selector/core";
+import { setupWalletSelector } from "@near-wallet-selector/core";
 import { setupMyNearWallet } from "@near-wallet-selector/my-near-wallet";
 import { setupModal } from "@near-wallet-selector/modal-ui";
 
@@ -29,12 +29,7 @@ export async function initWalletSelector(networkId = "testnet", contract = "", n
             : "https://app.mynearwallet.com",
       }),
     ],
-    createAccessKeyFor: contract
-      ? {
-          contractId: contract,
-          methodNames: ["submit_attestation"],
-        }
-      : undefined,
+    createAccessKeyFor: contract || undefined,
   });
 
   modal = setupModal(selector, {
@@ -82,19 +77,22 @@ export async function submitAttestation(attestation) {
   return wallet.signAndSendTransaction({
     receiverId: contractId,
     actions: [
-      actionCreators.functionCall(
-        "submit_attestation",
-        {
-          source_url: attestation.sourceUrl,
-          server_name: attestation.serverName,
-          timestamp: attestation.timestamp,
-          response_data: attestation.responseData,
-          notary_pubkey: attestation.notaryPubkey,
-          signature: attestation.signature,
+      {
+        type: "FunctionCall",
+        params: {
+          methodName: "submit_attestation",
+          args: {
+            source_url: attestation.sourceUrl,
+            server_name: attestation.serverName,
+            timestamp: attestation.timestamp,
+            response_data: attestation.responseData,
+            notary_pubkey: attestation.notaryPubkey,
+            signature: attestation.signature,
+          },
+          gas: "100000000000000", // 100 TGas
+          deposit: "50000000000000000000000", // 0.05 NEAR (storage)
         },
-        "100000000000000", // 100 TGas
-        "50000000000000000000000" // 0.05 NEAR (storage)
-      ),
+      },
     ],
   });
 }
