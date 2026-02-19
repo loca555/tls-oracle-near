@@ -386,7 +386,7 @@ async fn main() {
         .expect("PROVER_PORT должен быть числом");
 
     let bind_addr =
-        std::env::var("PROVER_BIND").unwrap_or_else(|_| "127.0.0.1".to_string());
+        std::env::var("PROVER_BIND").unwrap_or_else(|_| "0.0.0.0".to_string());
 
     // Загружаем или генерируем secp256k1 ключ для Notary
     let signing_key = load_or_generate_signing_key();

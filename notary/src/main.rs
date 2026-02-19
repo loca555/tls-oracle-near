@@ -212,7 +212,7 @@ async fn main() {
         .expect("NOTARY_PORT должен быть числом");
 
     let bind_addr = std::env::var("NOTARY_BIND")
-        .unwrap_or_else(|_| "127.0.0.1".to_string());
+        .unwrap_or_else(|_| "0.0.0.0".to_string());
 
     // Загружаем или генерируем Ed25519 ключ
     let signing_key = load_or_generate_key();
