@@ -5,7 +5,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY src/ src/
 RUN CARGO_BUILD_JOBS=2 cargo build --release
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y ca-certificates libssl3 \
     nodejs npm && rm -rf /var/lib/apt/lists/*
 # Глобальный snarkjs для ZK proof generation
