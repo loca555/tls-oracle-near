@@ -5,6 +5,7 @@
  */
 
 import { validateApiKey, DAILY_LIMIT } from "../services/auth.js";
+import config from "../config.js";
 
 export function requireAuth(req, res, next) {
   const apiKey = req.headers["x-api-key"];
@@ -13,6 +14,12 @@ export function requireAuth(req, res, next) {
     return res
       .status(401)
       .json({ error: "API-ключ обязателен. Заголовок: X-API-Key" });
+  }
+
+  // Сервисный ключ — для service-to-service (NearCast relayer и т.д.)
+  if (config.serviceApiKey && apiKey === config.serviceApiKey) {
+    req.auth = { accountId: "service", apiKeyId: 0 };
+    return next();
   }
 
   const keyInfo = validateApiKey(apiKey);

@@ -23,4 +23,7 @@ export default {
   prover: {
     url: process.env.PROVER_URL || "http://127.0.0.1:7048",
   },
+
+  // Сервисный API-ключ для service-to-service вызовов (без SQLite)
+  serviceApiKey: process.env.SERVICE_API_KEY || "",
 };
