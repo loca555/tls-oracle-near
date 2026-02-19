@@ -1,0 +1,24 @@
+[package]
+name = "tls-prover-service"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "prover-service"
+path = "src/main.rs"
+
+[dependencies]
+# HTTP
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.5", features = ["cors"] }
+reqwest = { version = "0.12", features = ["json"] }
+
+# Сериализация
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Утилиты
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dotenvy = "0.15"

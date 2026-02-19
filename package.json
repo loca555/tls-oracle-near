@@ -1,0 +1,26 @@
+{
+  "name": "tls-oracle",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "node --watch backend/server.js",
+    "dev:frontend": "cd frontend && npx vite --port 3001",
+    "build:contract": "cd contract && bash build.sh",
+    "build:notary": "cd notary && cargo build --release",
+    "build:prover": "cd prover && cargo build --release",
+    "start:notary": "cd notary && cargo run --release",
+    "start:prover": "cd prover && cargo run --release",
+    "start": "node backend/server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "near-api-js": "^5.0.1"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

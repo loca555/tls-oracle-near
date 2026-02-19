@@ -1,0 +1,6 @@
+node_modules/
+.env
+notary_key.bin
+target/
+dist/
+*.wasm

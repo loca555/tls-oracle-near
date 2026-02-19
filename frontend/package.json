@@ -1,0 +1,21 @@
+{
+  "name": "tls-oracle-frontend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 3001",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "@near-wallet-selector/core": "^8.9.15",
+    "@near-wallet-selector/my-near-wallet": "^8.9.15",
+    "@near-wallet-selector/modal-ui": "^8.9.15",
+    "near-api-js": "^5.0.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^5.4.14"
+  }
+}
