@@ -1,15 +1,15 @@
 # TLS Oracle — NEAR Blockchain
 
-Универсальный оракул на базе TLS Notary для NEAR. Криптографически доказывает данные с любого веб-сайта и записывает аттестацию on-chain с верификацией Ed25519 подписи.
+Universal oracle powered by TLS Notary for the NEAR blockchain. Cryptographically proves data from any website and stores attestations on-chain with Ed25519 signature verification.
 
-## Архитектура
+## Architecture
 
 ```
-[Пользователь] → [Frontend] → [Backend (Express)]
-                                      ↓
-                              [Prover Service (Rust)]
+[User] → [Frontend (React)] → [Backend (Express)]
+                                      ↓ HTTP
+                              [Prover Service (Rust/Axum)]
                                       ↕ MPC-TLS
-                              [Notary Server (Rust)]
+                              [Notary Server (Rust/Axum)]
                                       ↓
                               [Ed25519 Attestation]
                                       ↓
@@ -17,51 +17,51 @@
                               env::ed25519_verify → store
 ```
 
-**Trust model:** Notary подписывает данные, полученные из реального TLS-соединения. Prover не может подделать данные — Notary верифицирует перед подписью. Контракт проверяет Ed25519 подпись через нативную host-функцию NEAR.
+**Trust model:** The Notary signs data obtained from a real TLS connection. The Prover cannot forge data — the Notary verifies MPC commitments before signing. The contract verifies the Ed25519 signature via NEAR's native host function.
 
-## Компоненты
+## Components
 
-| Компонент | Стек | Порт |
-|-----------|------|------|
+| Component | Stack | Port |
+|-----------|-------|------|
 | `contract/` | Rust, near-sdk 5.6 | — |
 | `notary/` | Rust, Axum, ed25519-dalek | 7047 |
 | `prover/` | Rust, Axum | 7048 |
 | `backend/` | Node.js, Express | 4001 |
 | `frontend/` | React 18, Vite 5 | 3001 |
 
-## Деплой
+## Live Deployment
 
-| Сервис | URL |
-|--------|-----|
+| Service | URL |
+|---------|-----|
 | Frontend + API | https://tls-oracle-backend.onrender.com |
 | Notary Server | https://tls-notary-server.onrender.com |
 | Prover Service | https://tls-prover-service.onrender.com |
 | NEAR Contract | `tls-oracle.nearcast-oracle.testnet` |
 
-## Локальный запуск
+## Local Setup
 
 ```bash
-# 1. Контракт (сборка + деплой)
+# 1. Contract (build + deploy)
 cd contract && bash build.sh
 near deploy <account> target/wasm32-unknown-unknown/release/tls_oracle_mvp.wasm
 near call <account> new '{"owner": "<owner>"}' --accountId <owner>
 
 # 2. Notary Server
 cd notary && cargo run --release
-# → http://localhost:7047, генерирует Ed25519 ключ при первом запуске
+# → http://localhost:7047 (generates Ed25519 key on first run)
 
 # 3. Prover Service
 cd prover && cargo run --release
 # → http://localhost:7048
 
 # 4. Backend + Frontend
-cp .env.example .env  # заполнить переменные
+cp .env.example .env  # fill in variables
 npm install && cd frontend && npm install && cd ..
 npm run dev
 # → Backend http://localhost:4001, Frontend http://localhost:3001
 ```
 
-## Переменные окружения
+## Environment Variables
 
 ```env
 NEAR_NETWORK=testnet
@@ -74,23 +74,27 @@ NOTARY_URL=http://127.0.0.1:7047
 
 ## API
 
-| Метод | Эндпоинт | Описание |
-|-------|----------|----------|
-| POST | `/api/prove` | Запросить TLS-аттестацию `{url}` |
-| POST | `/api/submit` | Записать аттестацию в NEAR контракт |
-| POST | `/api/prove-and-submit` | Prove + Submit в одном запросе |
-| GET | `/api/attestations` | Список аттестаций |
-| GET | `/api/attestations/:id` | Детали аттестации |
-| GET | `/api/notaries` | Доверенные нотариусы |
-| GET | `/api/stats` | Статистика |
-| GET | `/api/templates` | Пресеты URL |
-| GET | `/api/health` | Статус сервисов |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/prove` | Request a TLS attestation `{url}` |
+| POST | `/api/submit` | Submit attestation to NEAR contract |
+| POST | `/api/prove-and-submit` | Prove + Submit in a single request |
+| GET | `/api/attestations` | List attestations |
+| GET | `/api/attestations/:id` | Attestation details |
+| GET | `/api/notaries` | Trusted notaries |
+| GET | `/api/stats` | Statistics |
+| GET | `/api/templates` | URL presets |
+| GET | `/api/health` | Service health status |
 
-## Смарт-контракт
+## Smart Contract
 
-**Методы:**
-- `add_notary(pubkey, name, url)` — добавить нотариуса (owner)
-- `remove_notary(pubkey)` — удалить нотариуса (owner)
-- `submit_attestation(source_url, server_name, timestamp, response_data, notary_pubkey, signature)` — отправить аттестацию (проверяет Ed25519)
-- `get_attestation(id)` / `get_attestations(from_index, limit)` — чтение
-- `get_notaries()` / `get_stats()` — информация
+**Methods:**
+- `add_notary(pubkey, name, url)` — register a trusted notary (owner only)
+- `remove_notary(pubkey)` — remove a notary (owner only)
+- `submit_attestation(source_url, server_name, timestamp, response_data, notary_pubkey, signature)` — submit attestation (verifies Ed25519)
+- `get_attestation(id)` / `get_attestations(from_index, limit)` — read data
+- `get_notaries()` / `get_stats()` — info
+
+## License
+
+MIT
