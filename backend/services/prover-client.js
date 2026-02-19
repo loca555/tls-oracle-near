@@ -25,6 +25,26 @@ export async function requestProof(params) {
 }
 
 /**
+ * Запросить ESPN аттестацию — MPC-TLS + ZK proof с извлечением scores
+ * @param {object} params - { espnEventId, sport, league }
+ * @returns {object} - { sourceUrl, serverName, timestamp, responseData, proofA, proofB, proofC, publicSignals }
+ */
+export async function requestEspnProof(params) {
+  const resp = await fetch(`${config.prover.url}/prove-espn`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`Prover ESPN ошибка (${resp.status}): ${text}`);
+  }
+
+  return resp.json();
+}
+
+/**
  * Получить информацию о нотариусе
  */
 export async function getNotaryInfo() {

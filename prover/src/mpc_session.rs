@@ -98,7 +98,7 @@ pub async fn run(
                 .protocol(
                     MpcTlsConfig::builder()
                         .max_sent_data(4096)
-                        .max_recv_data(16384)
+                        .max_recv_data(65536)
                         .build()?,
                 )
                 .build()?,

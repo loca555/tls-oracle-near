@@ -207,9 +207,9 @@ PORT=4001
 - [x] Replay-защита (Poseidon data commitment)
 - [x] API-ключи через NEAR wallet verification
 - [x] SSRF-защита в Prover (url_validator)
-- [ ] ECDSA secp256k1 верификация в circuit (circom-ecdsa, ~500K constraints)
-- [ ] Множественные нотариусы (N-of-M threshold)
-- [ ] TEE attestation для Notary (Intel TDX/SGX)
+- [ ] ECDSA secp256k1 верификация в circuit — trustless proof (circom-ecdsa, ~500K constraints)
 - [ ] Интеграция с NearCast как oracle-провайдер
 - [ ] Selective disclosure (раскрытие только части данных)
-- [ ] WebSocket streaming для прогресса MPC-TLS сессии
+- [ ] Множественные нотариусы (N-of-M threshold)
+- [ ] *(low priority)* TEE attestation для Notary (Intel TDX/SGX)
+- [ ] *(low priority)* WebSocket streaming для прогресса MPC-TLS сессии

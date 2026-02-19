@@ -40,6 +40,13 @@ const TEMPLATES = [
     url: "https://httpbin.org/json",
     category: "test",
   },
+  {
+    id: "espn-scores",
+    name: "ESPN Game Scores",
+    url: "https://site.api.espn.com/apis/site/v2/sports/{sport}/{league}/summary?event={event_id}",
+    category: "sports",
+    description: "MPC-TLS proof of live ESPN game scores (compact extraction)",
+  },
 ];
 
 // ── Эндпоинты ────────────────────────────────────────────────
@@ -88,6 +95,28 @@ router.post("/prove", requireAuth, async (req, res) => {
     res.json(attestation);
   } catch (err) {
     console.error("[api] /prove ошибка:", err.message);
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// Запросить ESPN аттестацию (защищённый — требует API-ключ)
+router.post("/prove-espn", requireAuth, async (req, res) => {
+  try {
+    const { espnEventId, sport, league } = req.body;
+    if (!espnEventId || !sport || !league) {
+      return res
+        .status(400)
+        .json({ error: "espnEventId, sport и league обязательны" });
+    }
+
+    const attestation = await proverClient.requestEspnProof({
+      espnEventId,
+      sport,
+      league,
+    });
+    res.json(attestation);
+  } catch (err) {
+    console.error("[api] /prove-espn ошибка:", err.message);
     res.status(502).json({ error: err.message });
   }
 });

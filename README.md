@@ -188,12 +188,12 @@ Two-level Poseidon tree for data (17 blocks × 31 bytes = 527 bytes max):
 - [x] Replay protection (Poseidon data commitment)
 - [x] API keys via NEAR wallet verification
 - [x] SSRF protection in Prover (url_validator)
-- [ ] ECDSA secp256k1 verification in circuit (circom-ecdsa, ~500K constraints)
-- [ ] Multiple notaries (N-of-M threshold)
-- [ ] TEE attestation for Notary (Intel TDX/SGX)
+- [ ] ECDSA secp256k1 verification in circuit — trustless proof (circom-ecdsa, ~500K constraints)
 - [ ] NearCast integration as oracle provider
 - [ ] Selective disclosure (reveal only parts of data)
-- [ ] WebSocket streaming for MPC-TLS session progress
+- [ ] Multiple notaries (N-of-M threshold)
+- [ ] *(low priority)* TEE attestation for Notary (Intel TDX/SGX)
+- [ ] *(low priority)* WebSocket streaming for MPC-TLS session progress
 
 ## License
 
