@@ -108,6 +108,48 @@ export function validateApiKey(apiKey) {
 }
 
 /**
+ * Отозвать (деактивировать) API-ключ
+ *
+ * Возвращает true если ключ был деактивирован, false если не найден
+ */
+export function revokeApiKey(apiKey) {
+  if (!apiKey || !apiKey.startsWith("tlso_")) return false;
+
+  const db = getDb();
+  const result = db
+    .prepare("UPDATE api_keys SET is_active = 0 WHERE api_key = ? AND is_active = 1")
+    .run(apiKey);
+
+  return result.changes > 0;
+}
+
+/**
+ * Перегенерировать API-ключ для аккаунта
+ *
+ * Деактивирует старый ключ и создаёт новый.
+ * Возвращает новый API-ключ или null если аккаунт не найден.
+ */
+export function regenerateApiKey(accountId) {
+  if (!accountId) return null;
+
+  const db = getDb();
+
+  // Деактивируем все текущие ключи аккаунта
+  db.prepare("UPDATE api_keys SET is_active = 0 WHERE account_id = ? AND is_active = 1")
+    .run(accountId);
+
+  // Генерируем новый API-ключ
+  const newApiKey = `tlso_${crypto.randomBytes(24).toString("hex")}`;
+
+  db.prepare(
+    `INSERT INTO api_keys (account_id, api_key, is_active)
+     VALUES (?, ?, 1)`,
+  ).run(accountId, newApiKey);
+
+  return newApiKey;
+}
+
+/**
  * Проверить что publicKey зарегистрирован для accountId через NEAR RPC
  */
 async function verifyAccessKey(accountId, publicKey) {

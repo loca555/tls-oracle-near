@@ -64,6 +64,26 @@ const styles = {
     background: "#065f46",
     color: "#6ee7b7",
   },
+  btnDanger: {
+    padding: "5px 12px",
+    borderRadius: 6,
+    border: "none",
+    cursor: "pointer",
+    fontWeight: 600,
+    fontSize: 12,
+    background: "#7f1d1d",
+    color: "#fca5a5",
+  },
+  btnWarn: {
+    padding: "5px 12px",
+    borderRadius: 6,
+    border: "none",
+    cursor: "pointer",
+    fontWeight: 600,
+    fontSize: 12,
+    background: "#78350f",
+    color: "#fbbf24",
+  },
   card: {
     background: "#111636",
     borderRadius: 12,
@@ -228,6 +248,57 @@ function App() {
     }
   };
 
+  // Удалить (деактивировать) API-ключ
+  const handleDeleteKey = async () => {
+    if (!apiKey) return;
+    if (!confirm("Вы уверены? API-ключ будет деактивирован. Для нового ключа потребуется повторная регистрация.")) return;
+
+    try {
+      const res = await fetch(`${API}/auth/key`, {
+        method: "DELETE",
+        headers: { "X-API-Key": apiKey },
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+
+      // Очищаем localStorage и состояние
+      localStorage.removeItem("tls-oracle-api-key");
+      setApiKeyState("");
+    } catch (err) {
+      alert("Delete error: " + err.message);
+    }
+  };
+
+  // Перегенерировать API-ключ (старый деактивируется, выдаётся новый)
+  const handleRegenerateKey = async () => {
+    if (!apiKey) return;
+    if (!confirm("Старый ключ будет деактивирован. Создать новый?")) return;
+
+    try {
+      const res = await fetch(`${API}/auth/regenerate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-API-Key": apiKey,
+        },
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+
+      const { apiKey: newKey } = await res.json();
+      setApiKey(newKey);
+      setApiKeyState(newKey);
+    } catch (err) {
+      alert("Regenerate error: " + err.message);
+    }
+  };
+
   return (
     <div style={styles.app}>
       <header style={styles.header}>
@@ -243,13 +314,21 @@ function App() {
                   Get API Key
                 </button>
               ) : (
-                <button
-                  style={{ ...styles.btnSmall, background: "#1e3a5f", color: "#93c5fd" }}
-                  onClick={() => { navigator.clipboard.writeText(apiKey); }}
-                  title={apiKey}
-                >
-                  Copy API Key
-                </button>
+                <>
+                  <button
+                    style={{ ...styles.btnSmall, background: "#1e3a5f", color: "#93c5fd" }}
+                    onClick={() => { navigator.clipboard.writeText(apiKey); }}
+                    title={apiKey}
+                  >
+                    Copy API Key
+                  </button>
+                  <button style={styles.btnWarn} onClick={handleRegenerateKey}>
+                    Regenerate
+                  </button>
+                  <button style={styles.btnDanger} onClick={handleDeleteKey}>
+                    Delete Key
+                  </button>
+                </>
               )}
               <button style={styles.btnOutline} onClick={signOut}>
                 Sign Out
@@ -298,6 +377,18 @@ function App() {
               onClick={() => navigator.clipboard.writeText(apiKey)}
             >
               Copy
+            </button>
+            <button
+              style={{ ...styles.btnWarn, whiteSpace: "nowrap" }}
+              onClick={handleRegenerateKey}
+            >
+              Regenerate
+            </button>
+            <button
+              style={{ ...styles.btnDanger, whiteSpace: "nowrap" }}
+              onClick={handleDeleteKey}
+            >
+              Delete
             </button>
           </div>
           <div style={{ marginTop: 8, color: "#4b5563", fontSize: 11 }}>

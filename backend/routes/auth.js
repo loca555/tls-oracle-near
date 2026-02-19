@@ -8,7 +8,8 @@
  */
 
 import { Router } from "express";
-import { createChallenge, verifyAndIssueKey } from "../services/auth.js";
+import { createChallenge, verifyAndIssueKey, revokeApiKey, regenerateApiKey } from "../services/auth.js";
+import { requireAuth } from "../middleware/auth.js";
 
 const router = Router();
 
@@ -41,6 +42,43 @@ router.post("/verify", async (req, res) => {
     res.json(result);
   } catch (err) {
     res.status(401).json({ error: err.message });
+  }
+});
+
+// Шаг 3 (опционально): Удалить (деактивировать) текущий API-ключ
+router.delete("/key", requireAuth, (req, res) => {
+  try {
+    const apiKey = req.headers["x-api-key"];
+    const revoked = revokeApiKey(apiKey);
+
+    if (!revoked) {
+      return res.status(404).json({ error: "API-ключ не найден или уже деактивирован" });
+    }
+
+    res.json({ success: true, message: "API-ключ деактивирован" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Шаг 4 (опционально): Перегенерировать API-ключ (деактивировать старый, создать новый)
+router.post("/regenerate", requireAuth, (req, res) => {
+  try {
+    const { accountId } = req.auth;
+
+    if (!accountId || accountId === "service") {
+      return res.status(400).json({ error: "Перегенерация недоступна для сервисных ключей" });
+    }
+
+    const newApiKey = regenerateApiKey(accountId);
+
+    if (!newApiKey) {
+      return res.status(500).json({ error: "Не удалось создать новый ключ" });
+    }
+
+    res.json({ apiKey: newApiKey });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
