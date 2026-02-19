@@ -1,6 +1,6 @@
 [package]
 name = "tls-prover-service"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [[bin]]
@@ -8,17 +8,41 @@ name = "prover-service"
 path = "src/main.rs"
 
 [dependencies]
-# HTTP
+# MPC-TLS
+tlsn = { git = "https://github.com/tlsnotary/tlsn", tag = "v0.1.0-alpha.14" }
+tlsn-formats = { git = "https://github.com/tlsnotary/tlsn", tag = "v0.1.0-alpha.14" }
+
+# Криптография (secp256k1 для Notary signing)
+k256 = { version = "0.13", features = ["ecdsa-core", "sha256"] }
+rand = "0.8"
+
+# HTTP клиент через MPC-TLS
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+
+# HTTP API сервер
 axum = "0.7"
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["compat"] }
 tower-http = { version = "0.5", features = ["cors"] }
-reqwest = { version = "0.12", features = ["json"] }
+futures = "0.3"
+
+# TLS корневые сертификаты
+webpki-roots = "0.26"
 
 # Сериализация
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+bincode = "1"
+base64 = "0.22"
+hex = "0.4"
+
+# URL парсинг и валидация
+url = "2"
 
 # Утилиты
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 dotenvy = "0.15"
+anyhow = "1"

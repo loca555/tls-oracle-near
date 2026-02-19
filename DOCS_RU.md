@@ -1,58 +1,73 @@
 # TLS Oracle — Документация (RU)
 
-Универсальный оракул на базе TLS Notary для NEAR. Криптографически доказывает данные с любого веб-сайта и записывает аттестацию on-chain с верификацией Ed25519 подписи.
+Универсальный оракул на базе TLS Notary для NEAR. Криптографически доказывает данные с любого веб-сайта через MPC-TLS протокол и записывает аттестацию on-chain с верификацией Groth16 ZK-proof через alt_bn128.
 
 ## Архитектура
 
 ```
 [Пользователь] → [Frontend (React)] → [Backend (Express)]
-                                              ↓ HTTP
+                                              ↓ HTTP POST /prove
                                       [Prover Service (Rust/Axum)]
-                                              ↕ MPC-TLS
-                                      [Notary Server (Rust/Axum)]
-                                              ↓
-                                      [Ed25519 Attestation]
-                                              ↓
+                                         ┌────────────────────┐
+                                         │  MPC-TLS Prover    │
+                                         │     ↕ duplex       │
+                                         │  Embedded Notary   │
+                                         │  (secp256k1 sign)  │
+                                         └────────┬───────────┘
+                                                  ↓ TCP
+                                         [Целевой HTTPS сервер]
+                                                  ↓
+                                         [snarkjs Groth16 proof]
+                                                  ↓
                                       [NEAR Smart Contract]
-                                      env::ed25519_verify → store
+                                      env::alt_bn128_pairing_check → store
 ```
 
-**Модель доверия:** Notary подписывает данные, полученные из реального TLS-соединения. Prover не может подделать данные — Notary верифицирует MPC-commitments перед подписью. Контракт проверяет Ed25519 подпись через нативную host-функцию NEAR.
+**Модель доверия:**
+- **MPC-TLS**: Prover и Notary (Verifier) совместно выполняют TLS handshake. Notary участвует в MPC-протоколе и подтверждает подлинность данных, не видя plaintext. Prover не может подделать данные.
+- **ZK-Proof**: Groth16 proof доказывает on-chain, что Prover знает данные, server name и notary pubkey с правильными Poseidon-хешами. Контракт проверяет proof через `alt_bn128_pairing_check` (~15 TGas).
+- **Доверенный Notary**: Контракт хранит Poseidon-хеши pubkey доверенных нотариусов. ECDSA подпись верифицируется off-chain в Prover (ECDSA в circuit = 500K+ constraints — будет добавлено позже).
 
 ## Компоненты
 
 | Компонент | Стек | Порт | Описание |
 |-----------|------|------|----------|
-| `contract/` | Rust, near-sdk 5.6 | — | NEAR смарт-контракт, хранит аттестации, проверяет Ed25519 |
-| `notary/` | Rust, Axum, ed25519-dalek | 7047 | Нотариус — делает HTTP-запрос, подписывает ответ Ed25519 |
-| `prover/` | Rust, Axum | 7048 | Прувер — проксирует запросы к нотариусу (MVP); в будущем MPC-TLS |
-| `backend/` | Node.js, Express | 4001 | API сервер, связка Prover ↔ NEAR контракт |
-| `frontend/` | React 18, Vite 5 | 3001 | UI: форма запроса, лента аттестаций, список нотариусов |
+| `contract/` | Rust, near-sdk 5.6 | — | NEAR контракт: Groth16 верификация через alt_bn128, хранение аттестаций |
+| `prover/` | Rust, Axum, tlsn, k256 | 7048 | MPC-TLS Prover + embedded Notary + ZK proof generation (snarkjs) |
+| `notary/` | Rust, Axum | 7047 | Legacy standalone Notary (для VPS deployment) |
+| `circuits/` | Circom 2.1, snarkjs | — | Poseidon-based ZK circuit (4607 constraints), trusted setup |
+| `backend/` | Node.js, Express | 4001 | API сервер, проксирует запросы к Prover |
+| `frontend/` | React 18, Vite 5 | 3001 | UI: запрос аттестаций, лента, нотариусы |
 
 ## Развёрнутые сервисы
 
 | Сервис | URL |
 |--------|-----|
 | Frontend + API | https://tls-oracle-backend.onrender.com |
-| Notary Server | https://tls-notary-server.onrender.com |
-| Prover Service | https://tls-prover-service.onrender.com |
-| NEAR Contract | `tls-oracle.nearcast-oracle.testnet` |
+| Prover (MPC-TLS + ZK) | https://tls-oracle-prover.onrender.com |
+| NEAR Contract | `tls-oracle-v2.nearcast-oracle.testnet` |
 
 ## Локальный запуск
 
 ```bash
-# 1. Контракт (сборка + деплой)
+# 1. Circuit (компиляция + trusted setup)
+cd circuits && bash build.sh
+# Генерирует: build/att_final.zkey, build/attestation_js/attestation.wasm
+# Обновляет: contract/src/vk_data.rs
+
+# 2. Контракт (сборка + деплой)
 cd contract && bash build.sh
-near deploy <account> target/wasm32-unknown-unknown/release/tls_oracle_mvp.wasm
+near deploy <account> target/wasm32-unknown-unknown/release/tls_oracle.wasm
 near call <account> new '{"owner": "<owner>"}' --accountId <owner>
+near call <account> add_notary '{"pubkey_hash": "<poseidon_hash>", "name": "...", "url": "..."}' --accountId <owner>
 
-# 2. Notary Server
-cd notary && cargo run --release
-# → http://localhost:7047, генерирует Ed25519 ключ при первом запуске
-
-# 3. Prover Service
-cd prover && cargo run --release
-# → http://localhost:7048
+# 3. Prover Service (MPC-TLS + embedded Notary)
+# Скопировать circuit артефакты:
+cp circuits/build/attestation_js/attestation.wasm prover/zk/attestation_js/
+cp circuits/build/att_final.zkey prover/zk/attestation_final.zkey
+cd prover/zk && npm install
+cd ../.. && cd prover && cargo run --release
+# → http://localhost:7048, генерирует secp256k1 ключ при первом запуске
 
 # 4. Backend + Frontend
 cp .env.example .env  # заполнить переменные
@@ -66,15 +81,16 @@ npm run dev
 ```env
 # NEAR
 NEAR_NETWORK=testnet
-TLS_ORACLE_CONTRACT=tls-oracle.nearcast-oracle.testnet
-ORACLE_ACCOUNT_ID=...          # аккаунт для submit_attestation
-ORACLE_PRIVATE_KEY=...         # приватный ключ
+TLS_ORACLE_CONTRACT=tls-oracle-v2.nearcast-oracle.testnet
 
-# Сервисы
+# Prover Service
 PROVER_URL=http://127.0.0.1:7048
-NOTARY_URL=http://127.0.0.1:7047
-NOTARY_PORT=7047
 PROVER_PORT=7048
+PROVER_BIND=127.0.0.1
+NOTARY_KEY_PATH=notary_key.bin   # secp256k1 ключ
+ZK_DIR=zk                        # путь к circuit артефактам
+
+# Backend
 PORT=4001
 ```
 
@@ -82,9 +98,7 @@ PORT=4001
 
 | Метод | Эндпоинт | Описание |
 |-------|----------|----------|
-| POST | `/api/prove` | Запросить TLS-аттестацию. Body: `{"url": "https://..."}` |
-| POST | `/api/submit` | Записать аттестацию в NEAR контракт |
-| POST | `/api/prove-and-submit` | Prove + Submit в одном запросе |
+| POST | `/api/prove` | Запросить MPC-TLS аттестацию + ZK proof. Body: `{"url": "https://..."}`. Требует API-ключ (X-API-Key) |
 | GET | `/api/attestations` | Список аттестаций. Query: `?from=0&limit=20` |
 | GET | `/api/attestations/:id` | Детали аттестации по ID |
 | GET | `/api/attestations/source/:domain` | Аттестации по домену |
@@ -94,9 +108,24 @@ PORT=4001
 | GET | `/api/health` | Статус сервисов (backend, prover, contract) |
 | GET | `/api/near-config` | Конфиг NEAR для фронтенда |
 
+### Формат ответа `/api/prove`
+
+```json
+{
+  "sourceUrl": "https://api.coingecko.com/...",
+  "serverName": "api.coingecko.com",
+  "timestamp": 1740000000,
+  "responseData": "{\"bitcoin\":{\"usd\":95000}}",
+  "proofA": ["12345...", "67890..."],
+  "proofB": [["111...", "222..."], ["333...", "444..."]],
+  "proofC": ["555...", "666..."],
+  "publicSignals": ["<dataCommitment>", "<serverNameHash>", "<timestamp>", "<notaryPubkeyHash>"]
+}
+```
+
 ## Смарт-контракт
 
-**Контракт:** `tls-oracle.nearcast-oracle.testnet`
+**Контракт:** `tls-oracle-v2.nearcast-oracle.testnet`
 **Owner:** `nearcast-oracle.testnet`
 
 ### Методы записи
@@ -104,10 +133,10 @@ PORT=4001
 | Метод | Кто вызывает | Описание |
 |-------|-------------|----------|
 | `new(owner)` | — | Инициализация контракта |
-| `add_notary(pubkey, name, url)` | owner | Добавить доверенного нотариуса (pubkey — base64, 32 байта) |
-| `remove_notary(pubkey)` | owner | Удалить нотариуса |
+| `add_notary(pubkey_hash, name, url)` | owner | Добавить нотариуса по Poseidon-хешу secp256k1 pubkey |
+| `remove_notary(pubkey_hash)` | owner | Удалить нотариуса |
 | `set_owner(new_owner)` | owner | Передать владение |
-| `submit_attestation(...)` | любой | Отправить аттестацию (контракт проверяет Ed25519 подпись) |
+| `submit_attestation(...)` | любой (payable) | Отправить аттестацию с Groth16 ZK proof |
 
 ### Параметры `submit_attestation`
 
@@ -115,12 +144,18 @@ PORT=4001
 |----------|-----|----------|
 | `source_url` | String | Полный URL запроса (макс 2KB) |
 | `server_name` | String | Домен (api.coingecko.com) |
-| `timestamp` | u64 | UNIX timestamp TLS-сессии |
+| `timestamp` | u64 | UNIX timestamp MPC-TLS сессии |
 | `response_data` | String | Данные ответа, JSON (макс 4KB) |
-| `notary_pubkey` | Base64 | Ed25519 публичный ключ нотариуса (32 байта) |
-| `signature` | Base64 | Ed25519 подпись (64 байта) |
+| `proof_a` | [String; 2] | Groth16 G1 точка A (decimal strings) |
+| `proof_b` | [[String; 2]; 2] | Groth16 G2 точка B |
+| `proof_c` | [String; 2] | Groth16 G1 точка C |
+| `public_signals` | [String; 4] | [dataCommitment, serverNameHash, timestamp, notaryPubkeyHash] |
 
-**Верификация:** контракт вычисляет `sha256(source_url|server_name|timestamp|response_data)` и проверяет подпись через `env::ed25519_verify`.
+**Верификация on-chain:**
+1. Проверка timestamp (±10 мин от block timestamp)
+2. Проверка `notaryPubkeyHash` в списке доверенных нотариусов
+3. Replay-защита по `dataCommitment` (Poseidon hash)
+4. Groth16 verify через `env::alt_bn128_pairing_check` (~15 TGas)
 
 ### View методы
 
@@ -133,24 +168,48 @@ PORT=4001
 | `get_stats()` | `{attestationCount, notaryCount, owner}` |
 | `get_owner()` | `AccountId` |
 
+## ZK Circuit
+
+**Файл:** `circuits/attestation.circom`
+**Constraints:** 4607 (Poseidon tree)
+**Public signals:** 4 (dataCommitment, serverNameHash, timestamp, notaryPubkeyHash)
+**Private inputs:** 27 (responseData[17], serverName[8], notaryPubkey[2])
+
+Двухуровневый Poseidon tree для данных (17 блоков × 31 байт = 527 байт макс):
+- `hash1 = Poseidon(9)(blocks[0..8])`
+- `hash2 = Poseidon(8)(blocks[9..16])`
+- `dataCommitment = Poseidon(2)(hash1, hash2)`
+
 ## Поток данных
 
 ```
 1. Пользователь вводит URL в UI (или выбирает пресет)
-2. Frontend → POST /api/prove {url}
-3. Backend → Prover Service → Notary Server
-4. Notary делает HTTP-запрос к целевому серверу
-5. Notary подписывает ответ: Ed25519(sha256(url|domain|ts|data))
-6. Аттестация возвращается пользователю
-7. Пользователь нажимает "Записать в NEAR"
-8. Backend → NEAR contract: submit_attestation(...)
-9. Контракт: ed25519_verify → сохраняет аттестацию on-chain
+2. Frontend → POST /api/prove {url} (с API-ключом)
+3. Backend → Prover Service POST /prove
+4. Prover запускает MPC-TLS:
+   a. tokio::io::duplex() → (prover_io, verifier_io)
+   b. Embedded Notary (Verifier) в фоновом task
+   c. MPC-TLS handshake с целевым сервером
+   d. HTTP запрос через MPC-TLS соединение
+   e. Prover.prove() → Attestation (secp256k1)
+5. snarkjs Groth16 fullProve → proof + publicSignals
+6. Ответ с данными + ZK proof возвращается пользователю
+7. Пользователь нажимает "Записать в NEAR" (подписывает из своего кошелька)
+8. Кошелёк → NEAR contract: submit_attestation(..., proof_a/b/c, public_signals)
+9. Контракт: alt_bn128_pairing_check → сохраняет аттестацию on-chain
 ```
 
 ## Roadmap
 
-- [ ] Полный MPC-TLS протокол (tlsn-prover) вместо прямого HTTP в Notary
-- [ ] Множественные нотариусы (N-of-M подписи)
+- [x] MPC-TLS протокол (tlsn v0.1.0-alpha.14, embedded Prover + Notary)
+- [x] ZK-proof верификация on-chain (Groth16 через alt_bn128_pairing_check)
+- [x] Poseidon-based circuit (4607 constraints, <1 сек proof generation)
+- [x] Replay-защита (Poseidon data commitment)
+- [x] API-ключи через NEAR wallet verification
+- [x] SSRF-защита в Prover (url_validator)
+- [ ] ECDSA secp256k1 верификация в circuit (circom-ecdsa, ~500K constraints)
+- [ ] Множественные нотариусы (N-of-M threshold)
 - [ ] TEE attestation для Notary (Intel TDX/SGX)
-- [ ] ZK-proof верификация on-chain (через alt_bn128)
 - [ ] Интеграция с NearCast как oracle-провайдер
+- [ ] Selective disclosure (раскрытие только части данных)
+- [ ] WebSocket streaming для прогресса MPC-TLS сессии

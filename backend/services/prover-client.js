@@ -5,9 +5,9 @@
 import config from "../config.js";
 
 /**
- * Запросить аттестацию через Prover → Notary
+ * Запросить MPC-TLS аттестацию + ZK proof через Prover
  * @param {object} params - { url, method?, headers? }
- * @returns {object} - { sourceUrl, serverName, timestamp, responseData, dataHash, notaryPubkey, signature }
+ * @returns {object} - { sourceUrl, serverName, timestamp, responseData, proofA, proofB, proofC, publicSignals }
  */
 export async function requestProof(params) {
   const resp = await fetch(`${config.prover.url}/prove`, {

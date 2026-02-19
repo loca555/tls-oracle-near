@@ -3,7 +3,13 @@ node_modules/
 notary_key.bin
 target/
 dist/
-*.wasm
+
+# Circuit build артефакты (регенерируются через circuits/build.sh)
+circuits/build/
+# ZK proving key и WASM (копируются в prover/zk/ при build)
+prover/zk/attestation_js/
+prover/zk/attestation_final.zkey
+
 tls-oracle.db
 tls-oracle.db-wal
 tls-oracle.db-shm

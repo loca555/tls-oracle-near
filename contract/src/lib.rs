@@ -1,7 +1,12 @@
 use near_sdk::borsh::BorshSerialize;
-use near_sdk::json_types::Base64VecU8;
 use near_sdk::store::{IterableMap, LookupMap, LookupSet};
 use near_sdk::{env, near, require, AccountId, BorshStorageKey, PanicOnDefault};
+
+mod bn254_types;
+mod groth16;
+mod vk_data;
+
+use bn254_types::{G1Point, G2Point, Scalar};
 
 // ── Ключи хранилища ─────────────────────────────────────────
 
@@ -11,12 +16,12 @@ enum StorageKey {
     TrustedNotaries,
     Attestations,
     AttestationsBySource,
-    UsedHashes,
+    UsedCommitments,
 }
 
 // ── Модели данных ────────────────────────────────────────────
 
-/// Аттестация — криптографически подтверждённые данные с веб-сайта
+/// Аттестация — ZK-верифицированные данные с веб-сайта
 #[near(serializers = [borsh, json])]
 #[derive(Clone)]
 #[serde(rename_all = "camelCase")]
@@ -26,9 +31,12 @@ pub struct Attestation {
     pub server_name: String,
     pub timestamp: u64,
     pub response_data: String,
-    pub data_hash: Base64VecU8,
-    pub notary_pubkey: Base64VecU8,
-    pub signature: Base64VecU8,
+    /// Poseidon commitment данных (public signal)
+    pub data_commitment: String,
+    /// Poseidon hash server_name (public signal)
+    pub server_name_hash: String,
+    /// Poseidon hash notary pubkey (public signal)
+    pub notary_pubkey_hash: String,
     pub submitter: AccountId,
     pub block_height: u64,
 }
@@ -38,7 +46,8 @@ pub struct Attestation {
 #[derive(Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct NotaryInfo {
-    pub pubkey: Base64VecU8,
+    /// Poseidon hash secp256k1 pubkey
+    pub pubkey_hash: String,
     pub name: String,
     pub url: String,
     pub added_by: AccountId,
@@ -58,11 +67,12 @@ const FUTURE_TOLERANCE_SECS: u64 = 60;
 #[derive(PanicOnDefault)]
 pub struct TlsOracle {
     owner: AccountId,
+    /// Ключ: Poseidon hash notary pubkey (decimal string)
     trusted_notaries: IterableMap<String, NotaryInfo>,
     attestations: IterableMap<u64, Attestation>,
     attestations_by_source: LookupMap<String, Vec<u64>>,
-    /// Использованные хеши для защиты от replay-атак
-    used_hashes: LookupSet<Vec<u8>>,
+    /// Poseidon data commitments для защиты от replay-атак
+    used_commitments: LookupSet<String>,
     attestation_count: u64,
 }
 
@@ -77,48 +87,45 @@ impl TlsOracle {
             trusted_notaries: IterableMap::new(StorageKey::TrustedNotaries),
             attestations: IterableMap::new(StorageKey::Attestations),
             attestations_by_source: LookupMap::new(StorageKey::AttestationsBySource),
-            used_hashes: LookupSet::new(StorageKey::UsedHashes),
+            used_commitments: LookupSet::new(StorageKey::UsedCommitments),
             attestation_count: 0,
         }
     }
 
     // ── Управление нотариусами (admin) ───────────────────────
 
-    pub fn add_notary(&mut self, pubkey: Base64VecU8, name: String, url: String) {
+    /// Добавить нотариуса по Poseidon hash его secp256k1 pubkey
+    pub fn add_notary(&mut self, pubkey_hash: String, name: String, url: String) {
         require!(
             env::predecessor_account_id() == self.owner,
             "Только owner может добавлять нотариусов"
         );
-        require!(pubkey.0.len() == 32, "Ed25519 pubkey должен быть 32 байта");
-
-        let key = hex::encode(&pubkey.0);
         require!(
-            !self.trusted_notaries.contains_key(&key),
+            !self.trusted_notaries.contains_key(&pubkey_hash),
             "Нотариус уже добавлен"
         );
 
         let info = NotaryInfo {
-            pubkey: pubkey.clone(),
+            pubkey_hash: pubkey_hash.clone(),
             name,
             url,
             added_by: env::predecessor_account_id(),
             added_at: env::block_height(),
         };
-        self.trusted_notaries.insert(key, info);
-        env::log_str(&format!("Нотариус добавлен: {}", hex::encode(&pubkey.0)));
+        self.trusted_notaries.insert(pubkey_hash.clone(), info);
+        env::log_str(&format!("Нотариус добавлен: {}", pubkey_hash));
     }
 
-    pub fn remove_notary(&mut self, pubkey: Base64VecU8) {
+    pub fn remove_notary(&mut self, pubkey_hash: String) {
         require!(
             env::predecessor_account_id() == self.owner,
             "Только owner может удалять нотариусов"
         );
-        let key = hex::encode(&pubkey.0);
         require!(
-            self.trusted_notaries.remove(&key).is_some(),
+            self.trusted_notaries.remove(&pubkey_hash).is_some(),
             "Нотариус не найден"
         );
-        env::log_str(&format!("Нотариус удалён: {}", key));
+        env::log_str(&format!("Нотариус удалён: {}", pubkey_hash));
     }
 
     pub fn set_owner(&mut self, new_owner: AccountId) {
@@ -129,8 +136,14 @@ impl TlsOracle {
         self.owner = new_owner;
     }
 
-    // ── Отправка аттестации ──────────────────────────────────
+    // ── Отправка аттестации с ZK-доказательством ─────────────
 
+    /// Submit аттестации с Groth16 ZK proof
+    ///
+    /// proof_a: G1 точка [x, y] (decimal strings)
+    /// proof_b: G2 точка [[x1, x2], [y1, y2]] (decimal strings)
+    /// proof_c: G1 точка [x, y] (decimal strings)
+    /// public_signals: [dataCommitment, serverNameHash, timestamp, notaryPubkeyHash]
     #[payable]
     pub fn submit_attestation(
         &mut self,
@@ -138,21 +151,16 @@ impl TlsOracle {
         server_name: String,
         timestamp: u64,
         response_data: String,
-        notary_pubkey: Base64VecU8,
-        signature: Base64VecU8,
+        // Groth16 proof
+        proof_a: [String; 2],
+        proof_b: [[String; 2]; 2],
+        proof_c: [String; 2],
+        public_signals: [String; 4],
     ) -> u64 {
-        let notary_key = hex::encode(&notary_pubkey.0);
-        require!(
-            self.trusted_notaries.contains_key(&notary_key),
-            "Нотариус не в списке доверенных"
-        );
-
-        require!(notary_pubkey.0.len() == 32, "Ed25519 pubkey: 32 байта");
-        require!(signature.0.len() == 64, "Ed25519 signature: 64 байта");
         require!(response_data.len() <= 4096, "response_data макс 4KB");
         require!(source_url.len() <= 2048, "source_url макс 2KB");
 
-        // Проверка timestamp: не старше MAX_ATTESTATION_AGE_SECS, не в будущем
+        // Проверка timestamp
         let block_ts_secs = env::block_timestamp() / 1_000_000_000;
         require!(
             timestamp <= block_ts_secs + FUTURE_TOLERANCE_SECS,
@@ -163,32 +171,55 @@ impl TlsOracle {
             "Аттестация устарела (макс 10 минут)"
         );
 
-        // Формируем подписанное сообщение (такой же формат у Notary)
-        let message = format!(
-            "{}|{}|{}|{}",
-            source_url, server_name, timestamp, response_data
-        );
-        let message_hash = env::sha256(message.as_bytes());
-
-        // Replay-защита: проверяем что этот хеш ещё не использовался
+        // Проверяем что timestamp в public_signals совпадает
         require!(
-            !self.used_hashes.contains(&message_hash),
+            public_signals[2] == timestamp.to_string(),
+            "Timestamp в public_signals не совпадает"
+        );
+
+        // Проверяем что нотариус доверенный (по Poseidon hash pubkey)
+        let notary_pubkey_hash = &public_signals[3];
+        require!(
+            self.trusted_notaries.contains_key(notary_pubkey_hash),
+            "Нотариус не в списке доверенных"
+        );
+
+        // Replay-защита по data commitment
+        let data_commitment = &public_signals[0];
+        require!(
+            !self.used_commitments.contains(data_commitment),
             "Эта аттестация уже была отправлена (replay)"
         );
 
-        // Ed25519 верификация — конвертируем Vec<u8> в fixed-size arrays
-        let sig_arr: [u8; 64] = signature.0.as_slice().try_into()
-            .expect("signature: 64 байта");
-        let pk_arr: [u8; 32] = notary_pubkey.0.as_slice().try_into()
-            .expect("pubkey: 32 байта");
+        // Парсим Groth16 proof
+        let proof = groth16::Proof {
+            a: G1Point::from_decimal(&proof_a[0], &proof_a[1]),
+            b: G2Point {
+                x_im: bn254_types::decimal_to_le_bytes(&proof_b[0][1]),
+                x_re: bn254_types::decimal_to_le_bytes(&proof_b[0][0]),
+                y_im: bn254_types::decimal_to_le_bytes(&proof_b[1][1]),
+                y_re: bn254_types::decimal_to_le_bytes(&proof_b[1][0]),
+            },
+            c: G1Point::from_decimal(&proof_c[0], &proof_c[1]),
+        };
 
-        let valid = env::ed25519_verify(&sig_arr, &message_hash, &pk_arr);
-        require!(valid, "Неверная Ed25519 подпись нотариуса");
+        // Парсим public signals → Scalar
+        let pub_inputs: Vec<Scalar> = public_signals
+            .iter()
+            .map(|s| Scalar::from_decimal(s))
+            .collect();
 
-        // Сохраняем хеш как использованный
-        self.used_hashes.insert(message_hash.clone());
+        // ZK верификация: Groth16 через alt_bn128
+        let vk = vk_data::get_vk();
+        require!(
+            groth16::verify(&vk, &proof, &pub_inputs),
+            "ZK proof невалиден"
+        );
 
-        // Сохраняем
+        // Сохраняем commitment как использованный
+        self.used_commitments.insert(data_commitment.clone());
+
+        // Сохраняем аттестацию
         let id = self.attestation_count;
         self.attestation_count += 1;
 
@@ -198,9 +229,9 @@ impl TlsOracle {
             server_name: server_name.clone(),
             timestamp,
             response_data,
-            data_hash: Base64VecU8(message_hash),
-            notary_pubkey,
-            signature,
+            data_commitment: public_signals[0].clone(),
+            server_name_hash: public_signals[1].clone(),
+            notary_pubkey_hash: public_signals[3].clone(),
             submitter: env::predecessor_account_id(),
             block_height: env::block_height(),
         };
@@ -217,7 +248,7 @@ impl TlsOracle {
         self.attestations_by_source.insert(server_name.clone(), ids);
 
         env::log_str(&format!(
-            "Аттестация #{} сохранена: {} ({})",
+            "ZK-аттестация #{} сохранена: {} ({})",
             id, server_name, env::predecessor_account_id()
         ));
 
@@ -230,7 +261,11 @@ impl TlsOracle {
         self.attestations.get(&id).cloned()
     }
 
-    pub fn get_attestations(&self, from_index: Option<u64>, limit: Option<u64>) -> Vec<Attestation> {
+    pub fn get_attestations(
+        &self,
+        from_index: Option<u64>,
+        limit: Option<u64>,
+    ) -> Vec<Attestation> {
         let total = self.attestation_count;
         if total == 0 {
             return vec![];
@@ -286,20 +321,5 @@ impl TlsOracle {
 
     pub fn get_owner(&self) -> AccountId {
         self.owner.clone()
-    }
-}
-
-// ── Hex encoding (минимальный, без внешнего крейта) ──────────
-
-mod hex {
-    const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
-
-    pub fn encode(bytes: &[u8]) -> String {
-        let mut s = String::with_capacity(bytes.len() * 2);
-        for &b in bytes {
-            s.push(HEX_CHARS[(b >> 4) as usize] as char);
-            s.push(HEX_CHARS[(b & 0x0f) as usize] as char);
-        }
-        s
     }
 }

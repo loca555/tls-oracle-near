@@ -1,50 +1,30 @@
 services:
-  # Notary Server — Rust, Ed25519 signing
+  # Prover Service (MPC-TLS + embedded Notary + ZK proof)
+  # Один сервис вместо двух: Notary встроен в Prover через tokio::io::duplex
   - type: web
-    name: tls-notary-server
-    runtime: docker
-    dockerfilePath: ./notary/Dockerfile
-    dockerContext: ./notary
-    plan: free
-    envVars:
-      - key: NOTARY_PORT
-        value: "10000"
-      - key: NOTARY_BIND
-        value: "0.0.0.0"
-      - key: NOTARY_KEY_PATH
-        value: /data/notary_key.bin
-      - key: ALLOWED_ORIGIN
-        fromService:
-          type: web
-          name: tls-prover-service
-          property: host
-    disk:
-      name: notary-data
-      mountPath: /data
-      sizeGB: 1
-
-  # Prover Service — Rust, HTTP API
-  - type: web
-    name: tls-prover-service
+    name: tls-oracle-prover
     runtime: docker
     dockerfilePath: ./prover/Dockerfile
     dockerContext: ./prover
-    plan: free
+    plan: starter  # MPC-TLS требует ~512MB+ RAM
     envVars:
       - key: PROVER_PORT
         value: "10000"
       - key: PROVER_BIND
         value: "0.0.0.0"
-      - key: NOTARY_URL
-        fromService:
-          type: web
-          name: tls-notary-server
-          property: host
+      - key: NOTARY_KEY_PATH
+        value: /data/notary_key.bin
+      - key: ZK_DIR
+        value: /app/zk
       - key: ALLOWED_ORIGIN
         fromService:
           type: web
           name: tls-oracle-backend
           property: host
+    disk:
+      name: prover-data
+      mountPath: /data
+      sizeGB: 1
 
   # Backend + Frontend — Node.js
   - type: web
@@ -61,9 +41,9 @@ services:
       - key: NEAR_NETWORK
         value: testnet
       - key: TLS_ORACLE_CONTRACT
-        value: tls-oracle.nearcast-oracle.testnet
+        value: tls-oracle-v2.nearcast-oracle.testnet
       - key: PROVER_URL
         fromService:
           type: web
-          name: tls-prover-service
+          name: tls-oracle-prover
           property: host

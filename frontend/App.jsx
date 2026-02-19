@@ -389,7 +389,7 @@ function ProveTab({ account, apiKey }) {
           disabled={loading || !url || !apiKey}
         >
           {loading
-            ? "Запрос к серверу..."
+            ? "MPC-TLS + ZK proof..."
             : !apiKey
               ? "Нужен API-ключ"
               : "Получить аттестацию"}
@@ -427,12 +427,22 @@ function ProveTab({ account, apiKey }) {
               2,
             )}
           </pre>
-          <div style={{ marginTop: 8 }}>
-            <span style={styles.tag}>Подпись</span>
-            <span style={styles.mono}>
-              {result.signature?.slice(0, 40)}...
-            </span>
-          </div>
+          {result.publicSignals && (
+            <div style={{ marginTop: 8 }}>
+              <span style={{ ...styles.tag, background: "#1e3a5f", color: "#93c5fd" }}>
+                ZK Proof
+              </span>
+              <span style={{ color: "#6ee7b7", fontSize: 12, fontWeight: 600 }}>
+                Groth16 BN254
+              </span>
+              <div style={{ ...styles.mono, marginTop: 6, fontSize: 11 }}>
+                dataCommitment: {result.publicSignals[0]?.slice(0, 30)}...
+              </div>
+              <div style={{ ...styles.mono, fontSize: 11 }}>
+                serverNameHash: {result.publicSignals[1]?.slice(0, 30)}...
+              </div>
+            </div>
+          )}
 
           <div style={{ marginTop: 16, display: "flex", gap: 12 }}>
             <button
@@ -596,7 +606,7 @@ function NotariesTab() {
                 {n.url}
               </div>
               <div style={{ ...styles.mono, marginTop: 6 }}>
-                Pubkey: {btoa(String.fromCharCode(...n.pubkey))}
+                Hash: {n.pubkeyHash?.slice(0, 30)}...
               </div>
               <div style={{ fontSize: 11, color: "#4b5563", marginTop: 4 }}>
                 Added by: {n.addedBy} | Block: {n.addedAt}
