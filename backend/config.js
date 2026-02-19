@@ -17,11 +17,11 @@ export default {
       (process.env.NEAR_NETWORK === "mainnet"
         ? "https://free.rpc.fastnear.com"
         : "https://test.rpc.fastnear.com"),
-    contractId: process.env.TLS_ORACLE_CONTRACT || "",
+    contractId: process.env.TLS_ORACLE_CONTRACT || "tls-oracle-v2.nearcast-oracle.testnet",
   },
 
   prover: {
-    url: process.env.PROVER_URL || "http://127.0.0.1:7048",
+    url: process.env.PROVER_URL || "https://tls-prover-service.onrender.com",
   },
 
   // Сервисный API-ключ для service-to-service вызовов (без SQLite)

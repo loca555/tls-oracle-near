@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from "react";
 import { createRoot } from "react-dom/client";
-import "@near-wallet-selector/modal-ui/styles.css";
 import {
   initWalletSelector,
   getAccount,
