@@ -175,16 +175,34 @@ function App() {
       });
       const { nonce } = await chalRes.json();
 
-      // 2. Get publicKey from wallet selector
+      // 2. Get publicKey — try wallet selector first, fallback to NEAR RPC
+      let publicKey = null;
       const selector = getSelector();
       const state = selector.store.getState();
       const acc = state.accounts?.[0];
-      const publicKey = acc?.publicKey;
+      publicKey = acc?.publicKey || null;
 
       if (!publicKey) {
-        throw new Error(
-          "Failed to get publicKey. Please reconnect your wallet.",
-        );
+        // Fallback: query NEAR RPC for access keys
+        const cfgRes = await fetch(`${API}/near-config`);
+        const { nodeUrl } = await cfgRes.json();
+        const rpcRes = await fetch(nodeUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            jsonrpc: "2.0", id: "1", method: "query",
+            params: { request_type: "view_access_key_list", finality: "final", account_id: account.accountId },
+          }),
+        });
+        const rpcData = await rpcRes.json();
+        const keys = rpcData.result?.keys || [];
+        // Prefer full-access key, fallback to any key
+        const fullKey = keys.find((k) => k.access_key?.permission === "FullAccess");
+        publicKey = fullKey?.public_key || keys[0]?.public_key || null;
+      }
+
+      if (!publicKey) {
+        throw new Error("No access keys found for this account.");
       }
 
       // 3. Verify via backend (checks that key belongs to account)

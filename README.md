@@ -168,6 +168,97 @@ PORT=4001
 | `get_stats()` | `{attestationCount, notaryCount, owner}` |
 | `get_owner()` | `AccountId` |
 
+## Usage Examples / Примеры использования
+
+### Get a crypto price attestation / Получить аттестацию цены криптовалюты
+
+**Via UI:**
+1. Open https://tls-oracle-backend.onrender.com
+2. Connect your NEAR wallet → click "Get API Key"
+3. Select "CoinGecko — BTC/USD" from presets or enter:
+   ```
+   https://api.coingecko.com/api/v3/simple/price?ids=near&vs_currencies=usd
+   ```
+4. Click **"Get Attestation"** — MPC-TLS + ZK proof takes ~30-60 seconds
+5. Review the result: domain, timestamp, data, ZK proof
+6. Click **"Submit to NEAR (0.05 NEAR)"** — writes attestation on-chain with Groth16 verification
+
+**Via API (curl):**
+```bash
+# 1. Get API key (register via UI first)
+
+# 2. Request attestation
+curl -X POST https://tls-oracle-backend.onrender.com/api/prove \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: YOUR_API_KEY" \
+  -d '{"url": "https://api.coingecko.com/api/v3/simple/price?ids=near&vs_currencies=usd"}'
+
+# Response:
+# {
+#   "sourceUrl": "https://api.coingecko.com/...",
+#   "serverName": "api.coingecko.com",
+#   "timestamp": 1740000000,
+#   "responseData": "{\"near\":{\"usd\":3.42}}",
+#   "proofA": [...], "proofB": [...], "proofC": [...],
+#   "publicSignals": ["<dataCommitment>", "<serverNameHash>", "<timestamp>", "<notaryPubkeyHash>"]
+# }
+
+# 3. Submit on-chain (via NEAR CLI)
+near call tls-oracle-v2.nearcast-oracle.testnet submit_attestation \
+  '{"source_url":"...","server_name":"api.coingecko.com","timestamp":1740000000,"response_data":"...","proof_a":[...],"proof_b":[...],"proof_c":[...],"public_signals":[...]}' \
+  --accountId your-account.testnet --deposit 0.05 --gas 200000000000000
+```
+
+### Prove sports data for prediction markets / Доказать спортивные данные для рынков предсказаний
+
+```bash
+# ESPN match result (used by NearCast prediction markets)
+curl -X POST https://tls-oracle-backend.onrender.com/api/prove \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: YOUR_API_KEY" \
+  -d '{"url": "https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/summary?event=401326..."}'
+```
+
+### Read attestations from blockchain / Чтение аттестаций из блокчейна
+
+```bash
+# List all attestations
+curl https://tls-oracle-backend.onrender.com/api/attestations?limit=10
+
+# By domain
+curl https://tls-oracle-backend.onrender.com/api/attestations/source/api.coingecko.com
+
+# Directly from NEAR contract (view call, free)
+near view tls-oracle-v2.nearcast-oracle.testnet get_attestations '{"limit": 10}'
+near view tls-oracle-v2.nearcast-oracle.testnet get_attestation '{"id": 1}'
+```
+
+---
+
+### Примеры (RU)
+
+**Через UI:**
+1. Открыть https://tls-oracle-backend.onrender.com
+2. Подключить NEAR кошелёк → нажать "Get API Key"
+3. Выбрать пресет или ввести URL (например цену NEAR):
+   ```
+   https://api.coingecko.com/api/v3/simple/price?ids=near&vs_currencies=usd
+   ```
+4. Нажать **"Get Attestation"** — MPC-TLS + ZK proof занимает ~30-60 секунд
+5. Проверить результат: домен, время, данные, ZK proof (Groth16 BN254)
+6. Нажать **"Submit to NEAR (0.05 NEAR)"** — записать аттестацию в блокчейн с верификацией ZK proof
+
+**Что происходит под капотом:**
+```
+Ваш запрос → Backend → Prover (MPC-TLS с api.coingecko.com) → ZK Proof (Groth16)
+→ Кошелёк подписывает TX → NEAR контракт верифицирует proof (alt_bn128) → Аттестация в блокчейне
+```
+
+**Безопасность:**
+- Никто не может подделать данные — MPC-TLS гарантирует подлинность
+- ZK proof подтверждает данные без раскрытия приватных входов
+- Контракт проверяет: свежесть (±10 мин), доверенный нотариус, уникальность (защита от повтора)
+
 ## ZK Circuit
 
 **File:** `circuits/attestation.circom`
