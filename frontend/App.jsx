@@ -911,6 +911,19 @@ function FeedTab() {
             >
               ZK Verified
             </span>
+            {a.sigVerified && (
+              <span
+                style={{
+                  ...styles.tag,
+                  background: "#1e3a2f",
+                  color: "#86efac",
+                  fontSize: 10,
+                  marginLeft: 4,
+                }}
+              >
+                Notary Signed
+              </span>
+            )}
           </div>
         </div>
       ))}

@@ -395,3 +395,39 @@ async fn run_verifier<T: AsyncRead + AsyncWrite + Send + Unpin + 'static>(
 
     Ok(())
 }
+
+// ── Подпись данных нотариусом ────────────────────────────────
+
+/// Формирует SHA-256 хеш и подписывает ключом нотариуса (secp256k1 ECDSA).
+///
+/// Формат сообщения: SHA-256(source_url || 0x00 || server_name || 0x00 || timestamp_be8 || 0x00 || response_data)
+/// Вызывается ПОСЛЕ финализации response_data (для ESPN — после компактификации).
+pub fn sign_attestation_data(
+    signing_key: &SigningKey,
+    source_url: &str,
+    server_name: &str,
+    timestamp: u64,
+    response_data: &str,
+) -> (String, u8) {
+    use sha2::{Sha256, Digest};
+    use k256::ecdsa::signature::hazmat::PrehashSigner;
+
+    // Детерминированный message hash
+    let mut hasher = Sha256::new();
+    hasher.update(source_url.as_bytes());
+    hasher.update(b"\x00");
+    hasher.update(server_name.as_bytes());
+    hasher.update(b"\x00");
+    hasher.update(&timestamp.to_be_bytes());
+    hasher.update(b"\x00");
+    hasher.update(response_data.as_bytes());
+    let hash: [u8; 32] = hasher.finalize().into();
+
+    // ECDSA подпись с recoverable recovery_id
+    let (signature, recovery_id): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) =
+        signing_key
+            .sign_prehash_recoverable(&hash)
+            .expect("ECDSA подпись");
+
+    (hex::encode(signature.to_bytes()), recovery_id.to_byte())
+}

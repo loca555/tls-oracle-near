@@ -17,6 +17,11 @@ enum StorageKey {
     Attestations,
     AttestationsBySource,
     UsedCommitments,
+    // v2: новые префиксы для миграции (старые данные с Borsh v1 не десериализуются)
+    TrustedNotariesV2,
+    AttestationsV2,
+    AttestationsBySourceV2,
+    UsedCommitmentsV2,
 }
 
 // ── Модели данных ────────────────────────────────────────────
@@ -39,6 +44,9 @@ pub struct Attestation {
     pub notary_pubkey_hash: String,
     pub submitter: AccountId,
     pub block_height: u64,
+    /// Подпись нотариуса верифицирована on-chain через ecrecover
+    #[serde(default)]
+    pub sig_verified: bool,
 }
 
 /// Информация о доверенном нотариусе
@@ -48,6 +56,9 @@ pub struct Attestation {
 pub struct NotaryInfo {
     /// Poseidon hash secp256k1 pubkey
     pub pubkey_hash: String,
+    /// Raw uncompressed secp256k1 pubkey x||y (hex, 128 chars = 64 bytes)
+    /// Нужен для ecrecover верификации подписи
+    pub raw_pubkey: Option<String>,
     pub name: String,
     pub url: String,
     pub added_by: AccountId,
@@ -60,6 +71,35 @@ pub struct NotaryInfo {
 const MAX_ATTESTATION_AGE_SECS: u64 = 600;
 /// Допуск на будущее время: 1 минута (в секундах)
 const FUTURE_TOLERANCE_SECS: u64 = 60;
+
+// ── Вспомогательные функции ──────────────────────────────────
+
+/// Hex string → bytes
+fn hex_to_bytes(hex_str: &str) -> Vec<u8> {
+    (0..hex_str.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex_str[i..i + 2], 16).unwrap())
+        .collect()
+}
+
+/// Формирует message hash для верификации подписи нотариуса.
+/// Формат: SHA-256(source_url || 0x00 || server_name || 0x00 || timestamp_be8 || 0x00 || response_data)
+fn build_sign_message(
+    source_url: &str,
+    server_name: &str,
+    timestamp: u64,
+    response_data: &str,
+) -> Vec<u8> {
+    let mut data = Vec::new();
+    data.extend_from_slice(source_url.as_bytes());
+    data.push(0x00);
+    data.extend_from_slice(server_name.as_bytes());
+    data.push(0x00);
+    data.extend_from_slice(&timestamp.to_be_bytes());
+    data.push(0x00);
+    data.extend_from_slice(response_data.as_bytes());
+    env::sha256(&data)
+}
 
 // ── Контракт ─────────────────────────────────────────────────
 
@@ -92,21 +132,64 @@ impl TlsOracle {
         }
     }
 
+    /// Миграция: сброс состояния при изменении Borsh схемы (testnet only)
+    /// Использует V2 storage keys чтобы не конфликтовать со старыми данными
+    #[private]
+    #[init(ignore_state)]
+    pub fn migrate(owner: AccountId) -> Self {
+        Self {
+            owner,
+            trusted_notaries: IterableMap::new(StorageKey::TrustedNotariesV2),
+            attestations: IterableMap::new(StorageKey::AttestationsV2),
+            attestations_by_source: LookupMap::new(StorageKey::AttestationsBySourceV2),
+            used_commitments: LookupSet::new(StorageKey::UsedCommitmentsV2),
+            attestation_count: 0,
+        }
+    }
+
     // ── Управление нотариусами (admin) ───────────────────────
 
     /// Добавить нотариуса по Poseidon hash его secp256k1 pubkey
-    pub fn add_notary(&mut self, pubkey_hash: String, name: String, url: String) {
+    /// raw_pubkey — uncompressed x||y (hex, 128 chars) для ecrecover
+    pub fn add_notary(
+        &mut self,
+        pubkey_hash: String,
+        name: String,
+        url: String,
+        raw_pubkey: Option<String>,
+    ) {
         require!(
             env::predecessor_account_id() == self.owner,
             "Только owner может добавлять нотариусов"
         );
-        require!(
-            !self.trusted_notaries.contains_key(&pubkey_hash),
-            "Нотариус уже добавлен"
-        );
+
+        if let Some(ref pk) = raw_pubkey {
+            require!(
+                pk.len() == 128,
+                "raw_pubkey: 128 hex chars (64 bytes x||y)"
+            );
+            require!(
+                pk.chars().all(|c| c.is_ascii_hexdigit()),
+                "raw_pubkey: невалидный hex"
+            );
+        }
+
+        // Если нотариус уже есть — обновляем (позволяет добавить raw_pubkey)
+        if self.trusted_notaries.contains_key(&pubkey_hash) {
+            let mut info = self.trusted_notaries.get(&pubkey_hash).unwrap().clone();
+            if raw_pubkey.is_some() {
+                info.raw_pubkey = raw_pubkey;
+            }
+            info.name = name;
+            info.url = url;
+            self.trusted_notaries.insert(pubkey_hash.clone(), info);
+            env::log_str(&format!("Нотариус обновлён: {}", pubkey_hash));
+            return;
+        }
 
         let info = NotaryInfo {
             pubkey_hash: pubkey_hash.clone(),
+            raw_pubkey,
             name,
             url,
             added_by: env::predecessor_account_id(),
@@ -136,14 +219,13 @@ impl TlsOracle {
         self.owner = new_owner;
     }
 
-    // ── Отправка аттестации с ZK-доказательством ─────────────
+    // ── Отправка аттестации с ZK-доказательством + подпись ────
 
-    /// Submit аттестации с Groth16 ZK proof
+    /// Submit аттестации с Groth16 ZK proof + подпись нотариуса
     ///
-    /// proof_a: G1 точка [x, y] (decimal strings)
-    /// proof_b: G2 точка [[x1, x2], [y1, y2]] (decimal strings)
-    /// proof_c: G1 точка [x, y] (decimal strings)
-    /// public_signals: [dataCommitment, serverNameHash, timestamp, notaryPubkeyHash]
+    /// Верификация:
+    /// 1. Groth16 ZK proof (data integrity через Poseidon commitments)
+    /// 2. secp256k1 ECDSA подпись нотариуса (ecrecover)
     #[payable]
     pub fn submit_attestation(
         &mut self,
@@ -156,6 +238,9 @@ impl TlsOracle {
         proof_b: [[String; 2]; 2],
         proof_c: [String; 2],
         public_signals: [String; 4],
+        // Подпись нотариуса (secp256k1 ECDSA)
+        notary_signature: String,
+        notary_sig_v: u8,
     ) -> u64 {
         require!(response_data.len() <= 4096, "response_data макс 4KB");
         require!(source_url.len() <= 2048, "source_url макс 2KB");
@@ -179,10 +264,11 @@ impl TlsOracle {
 
         // Проверяем что нотариус доверенный (по Poseidon hash pubkey)
         let notary_pubkey_hash = &public_signals[3];
-        require!(
-            self.trusted_notaries.contains_key(notary_pubkey_hash),
-            "Нотариус не в списке доверенных"
-        );
+        let notary_info = self
+            .trusted_notaries
+            .get(notary_pubkey_hash)
+            .expect("Нотариус не в списке доверенных")
+            .clone();
 
         // Replay-защита по data commitment
         let data_commitment = &public_signals[0];
@@ -190,6 +276,39 @@ impl TlsOracle {
             !self.used_commitments.contains(data_commitment),
             "Эта аттестация уже была отправлена (replay)"
         );
+
+        // ── Верификация подписи нотариуса (ecrecover) ────────
+        let raw_pk = notary_info
+            .raw_pubkey
+            .as_ref()
+            .expect("raw_pubkey не установлен — обновите нотариуса через add_notary");
+
+        require!(
+            notary_signature.len() == 128,
+            "notary_signature: 128 hex chars (64 bytes r||s)"
+        );
+        require!(notary_sig_v <= 1, "notary_sig_v: 0 или 1");
+
+        // Воспроизводим message hash (SHA-256)
+        let message_hash = build_sign_message(&source_url, &server_name, timestamp, &response_data);
+
+        // Декодируем подпись
+        let sig_bytes = hex_to_bytes(&notary_signature);
+
+        // ecrecover: восстанавливаем pubkey из подписи
+        let recovered = env::ecrecover(&message_hash, &sig_bytes, notary_sig_v, true)
+            .expect("ecrecover: невалидная подпись");
+
+        // Сравниваем с зарегистрированным pubkey нотариуса
+        let expected_pubkey = hex_to_bytes(raw_pk);
+        require!(
+            recovered.as_slice() == expected_pubkey.as_slice(),
+            "Подпись нотариуса не совпадает с зарегистрированным ключом"
+        );
+
+        env::log_str("Подпись нотариуса верифицирована (ecrecover)");
+
+        // ── Groth16 ZK верификация ──────────────────────────
 
         // Парсим Groth16 proof
         let proof = groth16::Proof {
@@ -234,6 +353,7 @@ impl TlsOracle {
             notary_pubkey_hash: public_signals[3].clone(),
             submitter: env::predecessor_account_id(),
             block_height: env::block_height(),
+            sig_verified: true,
         };
 
         self.attestations.insert(id, attestation);
@@ -248,7 +368,7 @@ impl TlsOracle {
         self.attestations_by_source.insert(server_name.clone(), ids);
 
         env::log_str(&format!(
-            "ZK-аттестация #{} сохранена: {} ({})",
+            "Аттестация #{} сохранена: {} ({}) [sig+zk verified]",
             id, server_name, env::predecessor_account_id()
         ));
 

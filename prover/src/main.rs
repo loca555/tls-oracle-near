@@ -17,6 +17,7 @@ use axum::{
     Json, Router,
 };
 use k256::ecdsa::SigningKey;
+use k256::elliptic_curve::sec1::ToEncodedPoint;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -75,7 +76,7 @@ struct EspnCompactData {
     eid: String,
 }
 
-/// Ответ с MPC-TLS аттестацией + ZK proof
+/// Ответ с MPC-TLS аттестацией + ZK proof + подпись нотариуса
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ProveResponse {
@@ -91,6 +92,10 @@ struct ProveResponse {
     proof_c: [String; 2],
     /// Public signals: [dataCommitment, serverNameHash, timestamp, notaryPubkeyHash]
     public_signals: [String; 4],
+    /// Подпись нотариуса secp256k1 ECDSA (hex, 64 bytes r||s)
+    notary_signature: String,
+    /// Recovery ID для ecrecover (0 или 1)
+    notary_sig_v: u8,
 }
 
 /// Информация о нотариусе
@@ -115,6 +120,19 @@ async fn notary_info(State(state): State<Arc<AppState>>) -> Json<NotaryInfoResp>
         pubkey_base64: state.notary_pubkey_b64.clone(),
         key_type: "secp256k1".to_string(),
     })
+}
+
+/// GET /notary-info-full — включает uncompressed pubkey для ecrecover
+async fn notary_info_full(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    let vk = state.signing_key.verifying_key();
+    let uncompressed = vk.to_encoded_point(false);
+    // Убираем 04 prefix — берём x||y (64 байта)
+    let xy_bytes = &uncompressed.as_bytes()[1..65];
+    Json(serde_json::json!({
+        "pubkeyBase64": state.notary_pubkey_b64,
+        "pubkeyUncompressedHex": hex::encode(xy_bytes),
+        "keyType": "secp256k1",
+    }))
 }
 
 /// POST /prove — выполнить MPC-TLS сессию + ZK proof
@@ -174,6 +192,17 @@ async fn prove(
         &zk_result.public_signals[0][..20.min(zk_result.public_signals[0].len())]
     );
 
+    // 4. Подпись нотариуса (secp256k1 ECDSA)
+    let (notary_signature, notary_sig_v) = mpc_session::sign_attestation_data(
+        &state.signing_key,
+        &session_result.source_url,
+        &session_result.server_name,
+        session_result.timestamp,
+        &session_result.response_data,
+    );
+
+    info!("Подпись нотариуса: sig={}...  v={}", &notary_signature[..16], notary_sig_v);
+
     Ok(Json(ProveResponse {
         source_url: session_result.source_url,
         server_name: session_result.server_name,
@@ -183,6 +212,8 @@ async fn prove(
         proof_b: zk_result.proof_b,
         proof_c: zk_result.proof_c,
         public_signals: zk_result.public_signals,
+        notary_signature,
+        notary_sig_v,
     }))
 }
 
@@ -266,6 +297,17 @@ async fn prove_espn(
         &zk_result.public_signals[0][..20.min(zk_result.public_signals[0].len())]
     );
 
+    // 6. Подпись нотариуса по компактным данным
+    let (notary_signature, notary_sig_v) = mpc_session::sign_attestation_data(
+        &state.signing_key,
+        &session_for_zk.source_url,
+        &session_for_zk.server_name,
+        session_for_zk.timestamp,
+        &session_for_zk.response_data,
+    );
+
+    info!("Подпись нотариуса (ESPN): sig={}...  v={}", &notary_signature[..16], notary_sig_v);
+
     Ok(Json(ProveResponse {
         source_url: session_for_zk.source_url,
         server_name: session_for_zk.server_name,
@@ -275,6 +317,8 @@ async fn prove_espn(
         proof_b: zk_result.proof_b,
         proof_c: zk_result.proof_c,
         public_signals: zk_result.public_signals,
+        notary_signature,
+        notary_sig_v,
     }))
 }
 
@@ -418,6 +462,7 @@ async fn main() {
     let app = Router::new()
         .route("/health", get(health))
         .route("/notary-info", get(notary_info))
+        .route("/notary-info-full", get(notary_info_full))
         .route("/prove", post(prove))
         .route("/prove-espn", post(prove_espn))
         .layer(cors)

@@ -74,8 +74,8 @@ export async function signOut() {
 // ── Контрактные вызовы ────────────────────────────────────────
 
 /**
- * Отправить аттестацию с ZK proof в контракт
- * Groth16 proof верифицируется on-chain через alt_bn128
+ * Отправить аттестацию с ZK proof + подпись нотариуса в контракт
+ * Groth16 proof + ecrecover верифицируются on-chain
  */
 export async function submitAttestation(attestation) {
   const wallet = await selector.wallet();
@@ -95,8 +95,10 @@ export async function submitAttestation(attestation) {
             proof_b: attestation.proofB,
             proof_c: attestation.proofC,
             public_signals: attestation.publicSignals,
+            notary_signature: attestation.notarySignature,
+            notary_sig_v: attestation.notarySigV,
           },
-          gas: "200000000000000", // 200 TGas (Groth16 pairing ~15 TGas)
+          gas: "200000000000000", // 200 TGas (Groth16 + ecrecover)
           deposit: "50000000000000000000000", // 0.05 NEAR (storage)
         },
       },
