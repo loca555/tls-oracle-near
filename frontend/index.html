@@ -16,6 +16,16 @@
   </head>
   <body>
     <div id="root"></div>
+    <!-- Захватываем transactionHashes ДО wallet-selector (он очищает URL) -->
+    <script>
+      (function() {
+        var p = new URLSearchParams(window.location.search);
+        var h = p.get("transactionHashes");
+        var e = p.get("errorMessage");
+        if (h) window.__NEAR_TX_HASH = h.split(",")[0];
+        if (e) window.__NEAR_TX_ERROR = decodeURIComponent(e);
+      })();
+    </script>
     <script type="module" src="./App.jsx"></script>
   </body>
 </html>

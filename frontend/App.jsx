@@ -486,18 +486,14 @@ function ProveTab({ account, apiKey }) {
       .then(setTemplates)
       .catch(() => {});
 
-    // MyNearWallet redirect — считываем transactionHashes из URL
-    const params = new URLSearchParams(window.location.search);
-    const hashes = params.get("transactionHashes");
-    if (hashes) {
-      setTxHash(hashes.split(",")[0]);
-      // Очищаем URL без перезагрузки
-      window.history.replaceState({}, "", window.location.pathname);
+    // MyNearWallet redirect — читаем из window (захвачено в index.html до wallet-selector)
+    if (window.__NEAR_TX_HASH) {
+      setTxHash(window.__NEAR_TX_HASH);
+      delete window.__NEAR_TX_HASH;
     }
-    const txError = params.get("errorMessage");
-    if (txError) {
-      setError(decodeURIComponent(txError));
-      window.history.replaceState({}, "", window.location.pathname);
+    if (window.__NEAR_TX_ERROR) {
+      setError(window.__NEAR_TX_ERROR);
+      delete window.__NEAR_TX_ERROR;
     }
   }, []);
 
