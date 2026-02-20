@@ -126,6 +126,7 @@ pub async fn run(
                 .try_into()
                 .context("Неверное DNS-имя сервера")?,
         ))
+        .root_store(RootCertStore::mozilla())
         .build()?;
 
     // connect() — async в новом API
