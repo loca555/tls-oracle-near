@@ -184,11 +184,24 @@ const styles = {
 
 // ── Main component ──────────────────────────────────────────
 
+// NearBlocks URL для testnet
+const NEARBLOCKS = "https://testnet.nearblocks.io";
+
 function App() {
   const [account, setAccount] = useState(null);
-  const [tab, setTab] = useState("prove");
   const [walletReady, setWalletReady] = useState(false);
   const [apiKey, setApiKeyState] = useState(getApiKey());
+
+  // Проверяем redirect из MyNearWallet
+  const hasTxHash = !!window.__NEAR_TX_HASH;
+  const [txHash] = useState(window.__NEAR_TX_HASH || null);
+  const [txError] = useState(window.__NEAR_TX_ERROR || null);
+  const [showTxBanner, setShowTxBanner] = useState(hasTxHash || !!window.__NEAR_TX_ERROR);
+  const [tab, setTab] = useState(hasTxHash ? "feed" : "prove");
+
+  // Очищаем глобальные переменные
+  if (window.__NEAR_TX_HASH) delete window.__NEAR_TX_HASH;
+  if (window.__NEAR_TX_ERROR) delete window.__NEAR_TX_ERROR;
 
   useEffect(() => {
     (async () => {
@@ -441,6 +454,65 @@ function App() {
         </div>
       )}
 
+      {/* Баннер после redirect из MyNearWallet */}
+      {showTxBanner && txHash && (
+        <div
+          style={{
+            ...styles.card,
+            borderColor: "#065f46",
+            background: "#052e16",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          <div>
+            <span style={{ color: "#6ee7b7", fontWeight: 600 }}>
+              Attestation submitted to NEAR!
+            </span>
+            <div style={{ marginTop: 6 }}>
+              <a
+                href={`${NEARBLOCKS}/txns/${txHash}`}
+                target="_blank"
+                rel="noreferrer"
+                style={{ color: "#a5b4fc", fontSize: 13 }}
+              >
+                View transaction on NearBlocks
+              </a>
+              <span style={{ ...styles.mono, marginLeft: 8 }}>
+                {txHash.slice(0, 12)}...{txHash.slice(-8)}
+              </span>
+            </div>
+          </div>
+          <button
+            style={{ ...styles.btnSmall, background: "#1e3a5f", color: "#93c5fd" }}
+            onClick={() => setShowTxBanner(false)}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+      {showTxBanner && txError && (
+        <div
+          style={{
+            ...styles.card,
+            borderColor: "#7f1d1d",
+            color: "#fca5a5",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          <span>Transaction error: {txError}</span>
+          <button
+            style={{ ...styles.btnDanger }}
+            onClick={() => setShowTxBanner(false)}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       <div style={styles.tabs}>
         <button
           style={styles.tab(tab === "prove")}
@@ -485,16 +557,6 @@ function ProveTab({ account, apiKey }) {
       .then((r) => r.json())
       .then(setTemplates)
       .catch(() => {});
-
-    // MyNearWallet redirect — читаем из window (захвачено в index.html до wallet-selector)
-    if (window.__NEAR_TX_HASH) {
-      setTxHash(window.__NEAR_TX_HASH);
-      delete window.__NEAR_TX_HASH;
-    }
-    if (window.__NEAR_TX_ERROR) {
-      setError(window.__NEAR_TX_ERROR);
-      delete window.__NEAR_TX_ERROR;
-    }
   }, []);
 
   const handleProve = async () => {
@@ -730,8 +792,41 @@ function FeedTab() {
               }
             })()}
           </pre>
-          <div style={{ marginTop: 6, fontSize: 11, color: "#4b5563" }}>
-            Submitter: {a.submitter} | Block: {a.blockHeight}
+          <div style={{ marginTop: 8, display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12 }}>
+            <span>
+              Submitter:{" "}
+              <a
+                href={`${NEARBLOCKS}/address/${a.submitter}`}
+                target="_blank"
+                rel="noreferrer"
+                style={{ color: "#a5b4fc" }}
+              >
+                {a.submitter}
+              </a>
+            </span>
+            <span>
+              Block:{" "}
+              <a
+                href={`${NEARBLOCKS}/blocks/${a.blockHeight}`}
+                target="_blank"
+                rel="noreferrer"
+                style={{ color: "#a5b4fc" }}
+              >
+                #{a.blockHeight}
+              </a>
+            </span>
+          </div>
+          <div style={{ marginTop: 6 }}>
+            <span
+              style={{
+                ...styles.tag,
+                background: "#1e3a5f",
+                color: "#93c5fd",
+                fontSize: 10,
+              }}
+            >
+              ZK Verified
+            </span>
           </div>
         </div>
       ))}
