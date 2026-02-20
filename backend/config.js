@@ -21,7 +21,7 @@ export default {
   },
 
   prover: {
-    url: process.env.PROVER_URL || "https://tls-prover-service.onrender.com",
+    url: process.env.PROVER_URL || "http://34.44.244.184:7048",
   },
 
   // Сервисный API-ключ для service-to-service вызовов (без SQLite)
