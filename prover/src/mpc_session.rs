@@ -107,7 +107,7 @@ pub async fn run(
                 .protocol(
                     MpcTlsConfig::builder()
                         .max_sent_data(4096)
-                        .max_recv_data(65536)
+                        .max_recv_data(524288) // 512 KB — ESPN summary ~400 KB
                         .build()?,
                 )
                 .build()?,
