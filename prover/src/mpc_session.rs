@@ -59,7 +59,7 @@ pub async fn run(
     signing_key: Arc<SigningKey>,
     url: &str,
     method: &str,
-    _headers: Option<HashMap<String, String>>,
+    headers: Option<HashMap<String, String>>,
 ) -> Result<SessionResult> {
     // Парсим URL
     let parsed_url = url::Url::parse(url).context("Неверный URL")?;
@@ -145,13 +145,22 @@ pub async fn run(
         hyper::client::conn::http1::handshake(tls_connection).await?;
     tokio::spawn(connection);
 
-    let request = Request::builder()
+    let mut req_builder = Request::builder()
         .method(method)
         .uri(&path)
         .header("Host", &host)
+        .header("User-Agent", "TLSOracle/1.0")
         .header("Accept", "application/json")
-        .header("Connection", "close")
-        .body(Empty::<Bytes>::new())?;
+        .header("Connection", "close");
+
+    // Добавляем пользовательские заголовки (если переданы)
+    if let Some(ref hdrs) = headers {
+        for (k, v) in hdrs {
+            req_builder = req_builder.header(k.as_str(), v.as_str());
+        }
+    }
+
+    let request = req_builder.body(Empty::<Bytes>::new())?;
 
     let response = request_sender
         .send_request(request)
