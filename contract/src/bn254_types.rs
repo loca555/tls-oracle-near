@@ -110,13 +110,14 @@ impl G1Point {
 }
 
 impl G2Point {
-    /// Сериализация для NEAR: 128 байт (x_im ++ x_re ++ y_im ++ y_re)
+    /// Сериализация для NEAR: 128 байт (x_re ++ x_im ++ y_re ++ y_im)
+    /// NEAR десериализует Fq2 как (c0=real, c1=imaginary) — real первый
     pub fn to_bytes(&self) -> [u8; 128] {
         let mut out = [0u8; 128];
-        out[..32].copy_from_slice(&self.x_im);
-        out[32..64].copy_from_slice(&self.x_re);
-        out[64..96].copy_from_slice(&self.y_im);
-        out[96..128].copy_from_slice(&self.y_re);
+        out[..32].copy_from_slice(&self.x_re);
+        out[32..64].copy_from_slice(&self.x_im);
+        out[64..96].copy_from_slice(&self.y_re);
+        out[96..128].copy_from_slice(&self.y_im);
         out
     }
 }
