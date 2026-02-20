@@ -543,9 +543,28 @@ function App() {
 
 // ── Tab: Prove Data ─────────────────────────────────────────
 
+// ESPN лиги
+const ESPN_LEAGUES = [
+  { sport: "soccer", league: "eng.1", label: "Premier League" },
+  { sport: "soccer", league: "esp.1", label: "La Liga" },
+  { sport: "soccer", league: "ger.1", label: "Bundesliga" },
+  { sport: "soccer", league: "ita.1", label: "Serie A" },
+  { sport: "soccer", league: "fra.1", label: "Ligue 1" },
+  { sport: "soccer", league: "usa.1", label: "MLS" },
+  { sport: "soccer", league: "uefa.champions", label: "Champions League" },
+  { sport: "basketball", league: "nba", label: "NBA" },
+  { sport: "football", league: "nfl", label: "NFL" },
+  { sport: "hockey", league: "nhl", label: "NHL" },
+  { sport: "baseball", league: "mlb", label: "MLB" },
+];
+
 function ProveTab({ account, apiKey }) {
   const [templates, setTemplates] = useState([]);
+  const [mode, setMode] = useState("url"); // "url" | "espn"
   const [url, setUrl] = useState("");
+  // ESPN форма
+  const [espnLeague, setEspnLeague] = useState("soccer/eng.1");
+  const [espnEventId, setEspnEventId] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
@@ -560,24 +579,40 @@ function ProveTab({ account, apiKey }) {
   }, []);
 
   const handleProve = async () => {
-    if (!url || !apiKey) return;
+    if (!apiKey) return;
     setLoading(true);
     setError(null);
     setResult(null);
     setTxHash(null);
 
     try {
-      const res = await fetch(`${API}/prove`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-API-Key": apiKey,
-        },
-        body: JSON.stringify({ url }),
-      });
+      let res;
+      if (mode === "espn") {
+        // ESPN endpoint — компактный JSON + ZK proof
+        if (!espnEventId) throw new Error("Event ID обязателен");
+        const [sport, league] = espnLeague.split("/");
+        res = await fetch(`${API}/prove-espn`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-API-Key": apiKey,
+          },
+          body: JSON.stringify({ espnEventId, sport, league }),
+        });
+      } else {
+        // Generic URL
+        if (!url) throw new Error("URL обязателен");
+        res = await fetch(`${API}/prove`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-API-Key": apiKey,
+          },
+          body: JSON.stringify({ url }),
+        });
+      }
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        // Ключ невалиден — очистить и предложить перерегистрацию
         if (res.status === 401 || res.status === 403) {
           setApiKey("");
           setApiKeyState("");
@@ -611,6 +646,8 @@ function ProveTab({ account, apiKey }) {
     }
   };
 
+  const canSubmit = mode === "espn" ? !!espnEventId : !!url;
+
   return (
     <div>
       <div style={styles.card}>
@@ -618,27 +655,72 @@ function ProveTab({ account, apiKey }) {
           Request TLS Attestation
         </h3>
 
-        <select
-          style={styles.select}
-          onChange={(e) => {
-            if (e.target.value) setUrl(e.target.value);
-          }}
-          defaultValue=""
-        >
-          <option value="">Choose a preset or enter URL...</option>
-          {templates.map((t) => (
-            <option key={t.id} value={t.url}>
-              {t.name}
-            </option>
-          ))}
-        </select>
+        {/* Переключатель режима */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+          <button
+            style={styles.tab(mode === "url")}
+            onClick={() => setMode("url")}
+          >
+            Custom URL
+          </button>
+          <button
+            style={styles.tab(mode === "espn")}
+            onClick={() => setMode("espn")}
+          >
+            ESPN Scores
+          </button>
+        </div>
 
-        <input
-          style={styles.input}
-          placeholder="https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-        />
+        {mode === "url" ? (
+          <>
+            <select
+              style={styles.select}
+              onChange={(e) => {
+                if (e.target.value) setUrl(e.target.value);
+              }}
+              defaultValue=""
+            >
+              <option value="">Choose a preset or enter URL...</option>
+              {templates.filter((t) => t.id !== "espn-scores").map((t) => (
+                <option key={t.id} value={t.url}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+
+            <input
+              style={styles.input}
+              placeholder="https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+            />
+          </>
+        ) : (
+          <>
+            <select
+              style={styles.select}
+              value={espnLeague}
+              onChange={(e) => setEspnLeague(e.target.value)}
+            >
+              {ESPN_LEAGUES.map((l) => (
+                <option key={`${l.sport}/${l.league}`} value={`${l.sport}/${l.league}`}>
+                  {l.label}
+                </option>
+              ))}
+            </select>
+
+            <input
+              style={styles.input}
+              placeholder="ESPN Event ID (например 740901)"
+              value={espnEventId}
+              onChange={(e) => setEspnEventId(e.target.value)}
+            />
+
+            <div style={{ fontSize: 11, color: "#4b5563", marginBottom: 12 }}>
+              MPC-TLS к ESPN API + извлечение компактного счёта + Groth16 ZK proof
+            </div>
+          </>
+        )}
 
         <button
           style={{
@@ -649,13 +731,15 @@ function ProveTab({ account, apiKey }) {
             opacity: !apiKey ? 0.5 : 1,
           }}
           onClick={handleProve}
-          disabled={loading || !url || !apiKey}
+          disabled={loading || !canSubmit || !apiKey}
         >
           {loading
             ? "MPC-TLS + ZK proof..."
             : !apiKey
               ? "API key required"
-              : "Get Attestation"}
+              : mode === "espn"
+                ? "Get ESPN Attestation"
+                : "Get Attestation"}
         </button>
       </div>
 
