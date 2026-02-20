@@ -12,6 +12,7 @@
     "build:prover": "cd prover && cargo build --release",
     "start:notary": "cd notary && cargo run --release",
     "start:prover": "cd prover && cargo run --release",
+    "build": "cd frontend && npm install && npx vite build",
     "start": "node backend/server.js"
   },
   "dependencies": {
