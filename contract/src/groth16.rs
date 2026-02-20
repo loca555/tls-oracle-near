@@ -38,12 +38,13 @@ pub struct Proof {
 /// Вычисляет multi-scalar multiplication: Σ(scalar[i] · point[i])
 /// через env::alt_bn128_g1_multiexp
 fn g1_multiexp(pairs: &[(Scalar, G1Point)]) -> G1Point {
-    // Формат для NEAR: [(scalar_32bytes, g1_point_64bytes), ...]
-    // Каждый элемент: 32 (scalar) + 64 (G1) = 96 байт
+    // Формат для NEAR (NEP-381): [(g1_point_64bytes, scalar_32bytes), ...]
+    // Каждый элемент: 64 (G1) + 32 (scalar) = 96 байт
+    // ВАЖНО: точка ПЕРВАЯ, скаляр ВТОРОЙ
     let mut data = Vec::with_capacity(pairs.len() * 96);
     for (scalar, point) in pairs {
-        data.extend_from_slice(&scalar.to_bytes());
         data.extend_from_slice(&point.to_bytes());
+        data.extend_from_slice(&scalar.to_bytes());
     }
 
     let result = env::alt_bn128_g1_multiexp(&data);
