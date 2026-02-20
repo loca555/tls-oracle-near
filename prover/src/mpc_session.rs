@@ -25,6 +25,7 @@ use tlsn::config::tls::TlsClientConfig;
 use tlsn::config::tls_commit::mpc::MpcTlsConfig;
 use tlsn::config::tls_commit::TlsCommitConfig;
 use tlsn::config::verifier::VerifierConfig;
+use tlsn::webpki::RootCertStore;
 use tlsn::connection::{ConnectionInfo, HandshakeData, ServerName, TranscriptLength};
 use tlsn::prover::ProverOutput;
 use tlsn::transcript::ContentType;
@@ -288,8 +289,10 @@ async fn run_verifier<T: AsyncRead + AsyncWrite + Send + Unpin + 'static>(
     let (driver, mut handle) = session.split();
     let driver_task = tokio::spawn(driver);
 
-    // Конфигурация Verifier
-    let verifier_config = VerifierConfig::builder().build()?;
+    // Конфигурация Verifier с Mozilla root certificates
+    let verifier_config = VerifierConfig::builder()
+        .root_store(RootCertStore::mozilla())
+        .build()?;
 
     let verifier = handle
         .new_verifier(verifier_config)?

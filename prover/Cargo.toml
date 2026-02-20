@@ -9,7 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 # MPC-TLS
-tlsn = { git = "https://github.com/tlsnotary/tlsn", tag = "v0.1.0-alpha.14" }
+tlsn = { git = "https://github.com/tlsnotary/tlsn", tag = "v0.1.0-alpha.14", features = ["mozilla-certs"] }
 tlsn-formats = { git = "https://github.com/tlsnotary/tlsn", tag = "v0.1.0-alpha.14" }
 
 # Криптография (secp256k1 для Notary signing)
